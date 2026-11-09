@@ -47,7 +47,10 @@ HOSTNAME_IN_NAME="false"
 SOURCE_ENTRIES=()
 DEST_ENTRIES=()
 CUSTOM_EXCLUDES=()
+SOURCE_EXCL_LINES=()       # per-source excludes: "path:pattern" entries
+CURRENT_EXCL_SRC=""        # active source path while parsing [excludes:/path] sections
 BACKUP_VERIFY="false"      # auto-verify archive integrity after each backup
+ARCHIVE_FORMAT="tar.gz"    # archive type: tar.gz | tar.bz2 | tar.xz | zip
 SS_DRY_RUN="${SS_DRY_RUN:-}"  # set by server for dry-run mode (env override)
 
 # ── Auto-detect Google Drive path (any user, any Google account) ───────────────
@@ -85,6 +88,7 @@ MAX_ARCHIVES_TO_KEEP=3
 COMPRESSION_LEVEL=6
 ARCHIVE_PREFIX={label}
 HOSTNAME_IN_NAME=false
+ARCHIVE_FORMAT=tar.gz
 
 [sources]
 $HOME/Developer|Developer
@@ -102,13 +106,22 @@ CONF
 # ── Parse config (bash 3.2 compatible — no readarray) ─────────────────────────
 load_config() {
     local section="" trimmed
+    CURRENT_EXCL_SRC=""
     [ ! -f "$CONF_FILE" ] && return
     while IFS= read -r line; do
         trimmed="${line#"${line%%[![:space:]]*}"}"
         [[ -z "$trimmed" || "$trimmed" == \#* ]] && continue
 
-        if [[ "$trimmed" =~ ^\[([a-zA-Z_]+)\]$ ]]; then
-            section="${BASH_REMATCH[1]}"
+        # Match [section] or [excludes:/path/to/source]
+        if [[ "$trimmed" =~ ^\[(.+)\]$ ]]; then
+            local hdr="${BASH_REMATCH[1]}"
+            if [[ "$hdr" == excludes:* ]]; then
+                section="source_excludes"
+                CURRENT_EXCL_SRC="${hdr#excludes:}"
+            else
+                section="$hdr"
+                CURRENT_EXCL_SRC=""
+            fi
             continue
         fi
 
@@ -124,12 +137,15 @@ load_config() {
                         ARCHIVE_PREFIX)       ARCHIVE_PREFIX="$val" ;;
                         HOSTNAME_IN_NAME)     HOSTNAME_IN_NAME="$val" ;;
                         BACKUP_VERIFY)        BACKUP_VERIFY="$val" ;;
+                        ARCHIVE_FORMAT)       ARCHIVE_FORMAT="$val" ;;
                     esac
                 fi
                 ;;
-            sources)      [[ "$trimmed" == *"|"* ]] && SOURCE_ENTRIES+=("$trimmed") ;;
-            destinations) [[ "$trimmed" == *"|"* ]] && DEST_ENTRIES+=("$trimmed") ;;
-            excludes)     [[ -n "$trimmed" ]] && CUSTOM_EXCLUDES+=("$trimmed") ;;
+            sources)        [[ "$trimmed" == *"|"* ]] && SOURCE_ENTRIES+=("$trimmed") ;;
+            destinations)   [[ "$trimmed" == *"|"* ]] && DEST_ENTRIES+=("$trimmed") ;;
+            excludes)       [[ -n "$trimmed" ]] && CUSTOM_EXCLUDES+=("$trimmed") ;;
+            source_excludes)
+                [[ -n "$trimmed" && -n "$CURRENT_EXCL_SRC" ]] &&                     SOURCE_EXCL_LINES+=("${CURRENT_EXCL_SRC}:${trimmed}") ;;
         esac
     done < "$CONF_FILE"
 }
@@ -175,7 +191,70 @@ make_archive_name() {
     NAME="${NAME//\{time\}/$TIME_PART}"
 
     # Always append timestamp suffix so archives never overwrite each other
-    echo "${NAME}_${DATE_PART}_${TIME_PART}.tar.gz"
+    local EXT; EXT=$(get_archive_ext)
+    echo "${NAME}_${DATE_PART}_${TIME_PART}.${EXT}"
+}
+
+# ── Archive format helpers ─────────────────────────────────────────────────────
+get_archive_ext() {
+    case "${ARCHIVE_FORMAT:-tar.gz}" in
+        tar.bz2) echo "tar.bz2" ;;
+        tar.xz)  echo "tar.xz"  ;;
+        zip)     echo "zip"     ;;
+        *)       echo "tar.gz"  ;;
+    esac
+}
+get_tar_comp_flag() {
+    # Returns the compression flag for tar (not used for zip)
+    case "${ARCHIVE_FORMAT:-tar.gz}" in
+        tar.bz2) echo "j" ;;
+        tar.xz)  echo "J" ;;
+        *)       echo "z" ;;   # tar.gz default
+    esac
+}
+
+# ── Per-source keep override ───────────────────────────────────────────────────
+# Source entry format: /path|Label  or  /path|Label|keep=N
+# Returns the effective keep value for the given source entry.
+get_source_keep() {
+    local ENTRY="$1"
+    local P1 P2 P3
+    # Split on | — bash 3.2 compat (no readarray; use while+IFS or manual split)
+    P1="${ENTRY%%|*}"
+    local REST="${ENTRY#*|}"
+    P2="${REST%%|*}"
+    P3="${REST#*|}"
+    [[ "$P3" == "$P2" ]] && P3=""   # no 3rd field
+    if [[ "$P3" == keep=* ]]; then
+        local K="${P3#keep=}"
+        K=$(( ${K:-0} + 0 ))
+        [ "$K" -gt 0 ] && echo "$K" && return
+    fi
+    echo "$MAX_ARCHIVES_TO_KEEP"
+}
+
+# ── Per-source excludes helper ─────────────────────────────────────────────────
+# Returns --exclude=pattern lines for the given source path.
+# Outputs one flag per line; caller reads with while loop.
+build_source_excludes() {
+    local SRC_PATH="$1"
+    local LINE LPATH LPAT
+    for LINE in "${SOURCE_EXCL_LINES[@]}"; do
+        LPATH="${LINE%%:*}"
+        LPAT="${LINE#*:}"
+        [[ "$LPATH" == "$SRC_PATH" ]] && echo "--exclude=${LPAT}"
+    done
+}
+
+# ── Archive verify (format-aware) ─────────────────────────────────────────────
+verify_archive() {
+    local ARCH="$1"
+    case "$ARCH" in
+        *.tar.bz2) tar -tjf "$ARCH" > /dev/null 2>&1 ;;
+        *.tar.xz)  tar -tJf "$ARCH" > /dev/null 2>&1 ;;
+        *.zip)     unzip -t  "$ARCH" > /dev/null 2>&1 ;;
+        *)         tar -tzf  "$ARCH" > /dev/null 2>&1 ;;
+    esac
 }
 
 # ── Exit trap — remove partial archives if engine crashes mid-backup ─────────────
@@ -187,7 +266,7 @@ if [ -n "$SS_DRY_RUN" ]; then
     log_msg "INFO" "🔍 DRY-RUN MODE — no archives will be written."
     for SRC_ENTRY in "${SOURCE_ENTRIES[@]}"; do
         SRC_PATH="${SRC_ENTRY%%|*}"
-        SRC_NAME="${SRC_ENTRY##*|}"
+        SRC_NAME="${SRC_ENTRY#*|}"; SRC_NAME="${SRC_NAME%%|*}"
         log_msg "INFO" "   📂 Would backup: $SRC_NAME ($SRC_PATH)"
         FC=$(find "$SRC_PATH" -type f 2>/dev/null | wc -l | tr -d ' ')
         SZ=$(du -sh "$SRC_PATH" 2>/dev/null | cut -f1 || echo "?")
@@ -303,30 +382,35 @@ preflight_space_check() {
 # ==============================================================================
 apply_retention_policy() {
     local DEST="$1" PREFIX="$2"
-    [ "$MAX_ARCHIVES_TO_KEEP" -eq 0 ] && {
+    # 3rd arg overrides global MAX_ARCHIVES_TO_KEEP (per-source retention)
+    local KEEP_COUNT="${3:-$MAX_ARCHIVES_TO_KEEP}"
+    KEEP_COUNT=$(( ${KEEP_COUNT:-0} + 0 ))
+    [ "$KEEP_COUNT" -eq 0 ] && {
         log_msg "INFO" "   📁 Retention: disabled (keeping all)."
         return 0
     }
 
     local ALL_ARCHIVES COUNT
-    # Match archives by sanitized label prefix — handles any naming scheme
+    # Match archives by sanitized label prefix — handles all archive formats
     local SAFE_PREFIX
     SAFE_PREFIX=$(echo "$PREFIX" | tr ' ' '_' | tr -cd '[:alnum:]_-')
-    ALL_ARCHIVES=$(ls -1t "$DEST/"*.tar.gz 2>/dev/null \
-        | grep "/${SAFE_PREFIX}_" \
-        | sort -t_ -k2,3)
-    # grep -c on empty string returns 0 on some shells but "0\n0" on others;
-    # strip non-digits and default to 0 to guard against "integer expected" errors
-    COUNT=$(echo "$ALL_ARCHIVES" | grep -c '.tar.gz' 2>/dev/null | tr -cd '0-9' | head -c 10)
+    # Gather all supported archive formats, newest first
+    ALL_ARCHIVES=$(ls -1t "$DEST/${SAFE_PREFIX}_"*.tar.gz \
+                         "$DEST/${SAFE_PREFIX}_"*.tar.bz2 \
+                         "$DEST/${SAFE_PREFIX}_"*.tar.xz \
+                         "$DEST/${SAFE_PREFIX}_"*.zip 2>/dev/null \
+                   | grep -v "^ls:" | sort -r)
+    # Strip non-digits; default to 0 to guard against "integer expected" errors
+    COUNT=$(echo "$ALL_ARCHIVES" | grep -c '.' 2>/dev/null | tr -cd '0-9' | head -c 10)
     COUNT=$(( ${COUNT:-0} + 0 ))   # coerce to integer; also handles empty
 
-    if [ "$COUNT" -le "$MAX_ARCHIVES_TO_KEEP" ]; then
-        log_msg "INFO" "   📁 Retention: $COUNT archive(s) — within limit of $MAX_ARCHIVES_TO_KEEP."
+    if [ "$COUNT" -le "$KEEP_COUNT" ]; then
+        log_msg "INFO" "   📁 Retention: $COUNT archive(s) — within limit of $KEEP_COUNT."
         return 0
     fi
 
-    local EXCESS=$(( COUNT - MAX_ARCHIVES_TO_KEEP ))
-    log_msg "INFO" "   📁 Retention: pruning $EXCESS oldest (keeping $MAX_ARCHIVES_TO_KEEP)."
+    local EXCESS=$(( COUNT - KEEP_COUNT ))
+    log_msg "INFO" "   📁 Retention: pruning $EXCESS oldest (keeping $KEEP_COUNT)."
     echo "$ALL_ARCHIVES" | head -n "$EXCESS" | while IFS= read -r OLD_FILE; do
         rm -f "$OLD_FILE" && log_msg "INFO" "   🗑  Pruned: $(basename "$OLD_FILE")" \
                           || log_err "Failed to prune: $OLD_FILE"
@@ -339,9 +423,16 @@ apply_retention_policy() {
 process_backup() {
     local SRC_PATH="$1"
     local SRC_NAME="$2"
+    local SRC_ENTRY="${3:-${SRC_PATH}|${SRC_NAME}}"   # full entry for per-source keep
+
+    # Effective retention: use per-source override if present, else global
+    local EFFECTIVE_KEEP
+    EFFECTIVE_KEEP=$(get_source_keep "$SRC_ENTRY")
+    EFFECTIVE_KEEP=$(( ${EFFECTIVE_KEEP:-0} + 0 ))
 
     log_msg "INFO" "──────────────────────────────────────────────────────────"
     log_msg "INFO" "📂 Source: $SRC_NAME  →  $SRC_PATH"
+    log_msg "INFO" "   Retention: keep $EFFECTIVE_KEEP archive(s) for this source"
 
     # Validate source
     if [ ! -d "$SRC_PATH" ] && [ ! -L "$SRC_PATH" ]; then
@@ -391,8 +482,17 @@ process_backup() {
     # Set progress-tracking global BEFORE tar starts (server polls this)
     CURRENT_ARCHIVE_PATH="$STAGE_PATH"
 
-    # ── Run tar ────────────────────────────────────────────────────────────────
-    log_msg "INFO" "⏳ Compressing → $STAGE_PATH"
+    # Build merged exclude flags: global TAR_EXCLUDES + per-source excludes
+    local MERGED_EXCLUDES=("${TAR_EXCLUDES[@]}")
+    local _PER_SRC_FLAG
+    while IFS= read -r _PER_SRC_FLAG; do
+        [[ -n "$_PER_SRC_FLAG" ]] && MERGED_EXCLUDES+=("$_PER_SRC_FLAG")
+    done < <(build_source_excludes "$SRC_PATH")
+    log_msg "INFO" "   Excludes: ${#MERGED_EXCLUDES[@]} total flags (global + per-source)"
+
+    # ── Run tar/zip ────────────────────────────────────────────────────────────
+    local ARCH_EXT; ARCH_EXT=$(get_archive_ext)
+    log_msg "INFO" "⏳ Compressing [${ARCH_EXT}] → $STAGE_PATH"
     log_msg "INFO" "   (This may take several minutes for large source trees...)"
 
     # Pipe stderr through a filter:
@@ -401,18 +501,32 @@ process_backup() {
     #   - everything else → pass through to ERROR_LOG
     local TAR_STDERR_TMP
     TAR_STDERR_TMP=$(mktemp /tmp/ss_tar_err.XXXXXX)
+    local _COMP_FLAG; _COMP_FLAG=$(get_tar_comp_flag)
 
-    (
-        cd "$(dirname "$REAL_SRC")" || exit 1
-        COPYFILE_DISABLE=1 tar \
-            "${TAR_EXCLUDES[@]}" \
-            --format=gnutar \
-            --no-xattrs \
-            -czf "$STAGE_PATH" \
-            -h \
-            "$(basename "$REAL_SRC")" \
-            2>"$TAR_STDERR_TMP"
-    )
+    if [ "$ARCH_EXT" = "zip" ]; then
+        # zip format — uses zip(1); per-source excludes not yet supported for zip
+        (
+            cd "$(dirname "$REAL_SRC")" || exit 1
+            COPYFILE_DISABLE=1 zip -r "${CLEVEL}" "$STAGE_PATH" "$(basename "$REAL_SRC")" \
+                -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
+                -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
+                -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
+                2>"$TAR_STDERR_TMP"
+        )
+    else
+        # tar format (gzip / bzip2 / xz) — MERGED_EXCLUDES has global + per-source
+        (
+            cd "$(dirname "$REAL_SRC")" || exit 1
+            COPYFILE_DISABLE=1 tar \
+                "${MERGED_EXCLUDES[@]}" \
+                --format=gnutar \
+                --no-xattrs \
+                -c${_COMP_FLAG}f "$STAGE_PATH" \
+                -h \
+                "$(basename "$REAL_SRC")" \
+                2>"$TAR_STDERR_TMP"
+        )
+    fi
     local TAR_EXIT=$?
 
     # Classify stderr lines
@@ -462,7 +576,7 @@ process_backup() {
 
     # Auto-verify archive if BACKUP_VERIFY=true
     if [ "${BACKUP_VERIFY:-false}" = "true" ]; then
-        log_msg "INFO" "   🔍 Auto-verifying archive integrity..."
+        log_msg "INFO" "   🔍 Auto-verifying archive integrity (${ARCH_EXT})..."
         if tar -tzf "$STAGE_PATH" >/dev/null 2>>"$ERROR_LOG"; then
             log_msg "INFO" "   ✅ Archive verified OK."
         else
@@ -481,7 +595,7 @@ process_backup() {
 
         if [ "$DEST_PATH" = "$PRIMARY_DEST_PATH" ]; then
             log_msg "SUCCESS" "☁️  Archive already at $DEST_LABEL (written directly)."
-            apply_retention_policy "$DEST_PATH" "$SRC_NAME"
+            apply_retention_policy "$DEST_PATH" "$SRC_NAME" "$EFFECTIVE_KEEP"
             continue
         fi
 
@@ -497,7 +611,7 @@ process_backup() {
         local CP_EXIT=$?
         if [ "$CP_EXIT" -eq 0 ]; then
             log_msg "SUCCESS" "☁️  Copy to $DEST_LABEL succeeded."
-            apply_retention_policy "$DEST_PATH" "$SRC_NAME"
+            apply_retention_policy "$DEST_PATH" "$SRC_NAME" "$EFFECTIVE_KEEP"
         else
             log_err "Copy to $DEST_LABEL failed (exit $CP_EXIT)."
             OVERALL_SUCCESS=false
@@ -645,7 +759,7 @@ if [ -n "$SS_SINGLE_SOURCE" ]; then
     done
     if [ "${#FILTERED[@]}" -gt 0 ]; then
         SOURCE_ENTRIES=("${FILTERED[@]}")
-        log_msg "INFO" "🎯 Single-source mode: ${SOURCE_ENTRIES[0]##*|} ($SS_SINGLE_SOURCE)"
+        log_msg "INFO" "🎯 Single-source mode: $(echo "${SOURCE_ENTRIES[0]#*|}" | cut -d'|' -f1) ($SS_SINGLE_SOURCE)"
     else
         log_msg "WARN" "⚠️  SS_SINGLE_SOURCE='$SS_SINGLE_SOURCE' not found in config — running all sources."
     fi
@@ -662,8 +776,8 @@ if [ "${#SOURCE_ENTRIES[@]}" -eq 0 ]; then
 else
     for SRC_ENTRY in "${SOURCE_ENTRIES[@]}"; do
         SRC_PATH="${SRC_ENTRY%%|*}"
-        SRC_NAME="${SRC_ENTRY##*|}"
-        if process_backup "$SRC_PATH" "$SRC_NAME"; then
+        SRC_NAME="${SRC_ENTRY#*|}"; SRC_NAME="${SRC_NAME%%|*}"
+        if process_backup "$SRC_PATH" "$SRC_NAME" "$SRC_ENTRY"; then
             RAW_MB=$(du -sm "$SRC_PATH" 2>/dev/null | awk '{print $1}')
             collect_source_json "$SRC_NAME" "$SRC_PATH" "${RAW_MB:-0}" "0" "SUCCESS"
         else
