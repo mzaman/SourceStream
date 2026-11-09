@@ -59,6 +59,7 @@ required = {
     "ARCHIVE_PREFIX":      "{label}",
     "HOSTNAME_IN_NAME":    "false",
     "BACKUP_VERIFY":       "false",
+    "ARCHIVE_FORMAT":      "tar.gz",
 }
 
 # Find the [settings] section

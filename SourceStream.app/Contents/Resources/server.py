@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SourceStream Dashboard Server  v1.0.3
+SourceStream Dashboard Server  v1.0.5
 SourceStream.app/Contents/Resources/server.py
 
 Binds to 127.0.0.1:7474.
@@ -11,7 +11,7 @@ Run via LaunchAgent (auto-starts at login) or via the app launcher.
 import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil, platform, sys
 from pathlib import Path
 
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.5"
 PORT        = 7474
 APP_RES     = Path(__file__).parent          # …/SourceStream.app/Contents/Resources/
 SS_DIR      = Path.home() / ".sourcestream"
@@ -54,19 +54,39 @@ DEFAULT_SETTINGS = {
     "ARCHIVE_PREFIX":      "{label}",
     "HOSTNAME_IN_NAME":    "false",
     "BACKUP_VERIFY":       "false",
+    "ARCHIVE_FORMAT":      "tar.gz",
 }
 
 def parse_conf():
+    """Parse sourcestream.conf and return 5 values:
+       settings, sources, dests, excludes, source_excludes
+
+    source_excludes is a dict keyed by source path:
+        {"/path/to/source": ["pattern1", "pattern2"]}
+
+    Sources are returned as raw strings (may contain |keep=N as 3rd field).
+    Global [excludes] section → excludes list.
+    Per-source [excludes:/path] sections → source_excludes dict.
+    """
     settings = dict(DEFAULT_SETTINGS)
     sources, dests, excludes = [], [], []
+    source_excludes = {}   # {src_path: [patterns]}
     section = ""
+    current_excl_src = ""  # used when section == "source_excludes"
     try:
         for line in CONF.read_text().splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
             if line.startswith("[") and line.endswith("]"):
-                section = line[1:-1]
+                inner = line[1:-1]
+                # Check for [excludes:/path] style
+                if inner.startswith("excludes:"):
+                    section = "source_excludes"
+                    current_excl_src = inner[len("excludes:"):]
+                else:
+                    section = inner
+                    current_excl_src = ""
                 continue
             if section == "settings" and "=" in line:
                 k, v = line.split("=", 1)
@@ -77,12 +97,20 @@ def parse_conf():
                 dests.append(line)
             elif section == "excludes" and line:
                 excludes.append(line)
+            elif section == "source_excludes" and line and current_excl_src:
+                if current_excl_src not in source_excludes:
+                    source_excludes[current_excl_src] = []
+                source_excludes[current_excl_src].append(line)
     except Exception:
         pass
-    return settings, sources, dests, excludes
+    return settings, sources, dests, excludes, source_excludes
 
 
-def write_conf(settings, sources, dests, excludes=None):
+def write_conf(settings, sources, dests, excludes=None, source_excludes=None):
+    """Write config to disk.
+
+    source_excludes: dict {"/path": ["pattern1", ...]}  — written as [excludes:/path] sections.
+    """
     CONF.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# SourceStream Configuration",
@@ -94,6 +122,11 @@ def write_conf(settings, sources, dests, excludes=None):
     ]
     if excludes:
         lines += ["", "[excludes]", *excludes]
+    # Write per-source excludes sections
+    if source_excludes:
+        for src_path, patterns in source_excludes.items():
+            if patterns:
+                lines += ["", f"[excludes:{src_path}]", *patterns]
     lines.append("")
     CONF.write_text("\n".join(lines))
 
@@ -182,7 +215,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p == "/api/health":
             c = {}
             c["script"]     = os.access(str(SCRIPT), os.X_OK)
-            _, _src, _dst, _exc = parse_conf()
+            _, _src, _dst, _exc, _src_exc = parse_conf()
             drive_path = Path(_dst[0].split("|")[0]) if _dst else GDRIVE
             c["drive"]      = drive_path.is_dir()
             try:
@@ -207,7 +240,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 c["running"] = False; c["pid"] = None
             try:    c["error_bytes"] = ERR_LOG.stat().st_size
             except: c["error_bytes"] = 0
-            try:    c["archive_count"] = len(list(drive_path.glob("*.tar.gz")))
+            # Count all supported archive formats
+            try:
+                arc_count = 0
+                for pattern in ["*.tar.gz", "*.tar.bz2", "*.tar.xz", "*.zip"]:
+                    arc_count += len(list(drive_path.glob(pattern)))
+                c["archive_count"] = arc_count
             except: c["archive_count"] = 0
             c["conf_path"]    = str(CONF)
             c["logs_path"]    = str(LOGS_DIR)
@@ -215,10 +253,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.jsend(c)
 
         if p == "/api/config":
-            s, src, dst, exc = parse_conf()
+            s, src, dst, exc, src_exc = parse_conf()
             return self.jsend({
                 "settings": s, "sources": src, "destinations": dst,
                 "excludes": exc,
+                "source_excludes": src_exc,
                 "config_path": str(CONF),
                 "logs_path": str(LOGS_DIR),
                 "app_version": APP_VERSION,
@@ -282,7 +321,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/analyze":
             res = {}
-            s, src, dst_entries, _exc = parse_conf()
+            s, src, dst_entries, _exc, _src_exc = parse_conf()
             sources = [e.split("|")[0] for e in src] or [str(Path.home() / "Developer")]
             drive_path_analyze = Path(dst_entries[0].split("|")[0]) if dst_entries else GDRIVE
             try:
@@ -325,7 +364,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/archives":
             archs = []
-            _, _src, dsts, _exc = parse_conf()
+            _, _src, dsts, _exc, _src_exc = parse_conf()
             dest_list = [(d.split("|")[0], d.split("|")[1] if "|" in d else "Drive") for d in dsts] \
                         if dsts else [(str(GDRIVE), "Google Drive")]
             try:
@@ -333,8 +372,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     dest = Path(dest_path)
                     if not dest.is_dir():
                         continue
-                    for f in sorted(dest.glob("*.tar.gz"),
-                                    key=lambda x: x.stat().st_mtime, reverse=True):
+                    # Collect all supported archive formats
+                    all_archives = []
+                    for pattern in ["*.tar.gz", "*.tar.bz2", "*.tar.xz", "*.zip"]:
+                        all_archives.extend(dest.glob(pattern))
+                    for f in sorted(all_archives, key=lambda x: x.stat().st_mtime, reverse=True):
                         st      = f.stat()
                         created = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
                         archs.append({
@@ -350,14 +392,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.jsend(archs)
 
         if p == "/api/archive-verify":
-            # Verifies a single archive is readable (tar -tzf)
+            # Verifies a single archive is readable — detects format from extension
             # Expects ?path= query parameter
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             arch_path = qs.get("path", [""])[0]
             if not arch_path or not Path(arch_path).exists():
                 return self.jsend({"ok": False, "error": "File not found"})
             try:
-                r = sh(["tar", "-tzf", arch_path])
+                if arch_path.endswith(".tar.bz2"):
+                    r = sh(["tar", "-tjf", arch_path])
+                elif arch_path.endswith(".tar.xz"):
+                    r = sh(["tar", "-tJf", arch_path])
+                elif arch_path.endswith(".zip"):
+                    r = sh(["unzip", "-t", arch_path])
+                else:
+                    r = sh(["tar", "-tzf", arch_path])
                 count = len(r.stdout.splitlines())
                 ok = r.returncode == 0 and count > 0
                 return self.jsend({"ok": ok, "entries": count,
@@ -408,7 +457,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 }
             except Exception:
                 res["ssd"] = {}
-            _, _src, dsts, _exc = parse_conf()
+            _, _src, dsts, _exc, _src_exc = parse_conf()
             dest_list = [(d.split("|")[0], d.split("|")[1] if "|" in d else "Drive") for d in dsts] \
                         if dsts else [(str(GDRIVE), "Google Drive")]
             drives = []
@@ -419,8 +468,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     total = st.f_blocks * st.f_frsize
                     free  = st.f_bavail * st.f_frsize
                     used  = total - free
-                    arc_sz = sum(f.stat().st_size for f in dest.glob("*.tar.gz") if f.exists()) \
-                             if dest.is_dir() else 0
+                    arc_sz = 0
+                    if dest.is_dir():
+                        for pattern in ["*.tar.gz", "*.tar.bz2", "*.tar.xz", "*.zip"]:
+                            arc_sz += sum(f.stat().st_size for f in dest.glob(pattern) if f.exists())
                     drives.append({
                         "label":      dest_label,
                         "path":       dest_path,
@@ -548,54 +599,132 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.jsend({"ok": False, "error": str(e)})
 
         if p == "/api/config":
-            s, src, dst, exc = parse_conf()
+            s, src, dst, exc, src_exc = parse_conf()
             new_s = body.get("settings", {})
             s.update(new_s)
-            write_conf(s, src, dst, exc)
+            # Merge source_excludes from body if provided
+            body_src_exc = body.get("source_excludes")
+            if isinstance(body_src_exc, dict):
+                src_exc.update(body_src_exc)
+            write_conf(s, src, dst, exc, src_exc)
             return self.jsend({"ok": True})
 
         if p == "/api/sources/add":
-            s, src, dst, exc = parse_conf()
+            s, src, dst, exc, src_exc = parse_conf()
             e = body.get("entry", "").strip()
             if e and "|" in e and e not in src:
-                src.append(e); write_conf(s, src, dst, exc)
+                src.append(e); write_conf(s, src, dst, exc, src_exc)
             return self.jsend({"ok": True})
 
         if p == "/api/sources/remove":
-            s, src, dst, exc = parse_conf()
+            s, src, dst, exc, src_exc = parse_conf()
             pv  = body.get("path", "")
             src = [x for x in src if not x.startswith(pv + "|")]
-            write_conf(s, src, dst, exc)
+            write_conf(s, src, dst, exc, src_exc)
+            return self.jsend({"ok": True})
+
+        if p == "/api/sources/update":
+            # Replace one source entry: {"old_path": "/old", "new_entry": "/new|Label|keep=5"}
+            s, src, dst, exc, src_exc = parse_conf()
+            old_path  = body.get("old_path", "").strip()
+            new_entry = body.get("new_entry", "").strip()
+            if old_path and new_entry:
+                src = [new_entry if x.startswith(old_path + "|") else x for x in src]
+                write_conf(s, src, dst, exc, src_exc)
             return self.jsend({"ok": True})
 
         if p == "/api/destinations/add":
-            s, src, dst, exc = parse_conf()
+            s, src, dst, exc, src_exc = parse_conf()
             e = body.get("entry", "").strip()
             if e and "|" in e and e not in dst:
-                dst.append(e); write_conf(s, src, dst, exc)
+                dst.append(e); write_conf(s, src, dst, exc, src_exc)
             return self.jsend({"ok": True})
 
         if p == "/api/destinations/remove":
-            s, src, dst, exc = parse_conf()
+            s, src, dst, exc, src_exc = parse_conf()
             if len(dst) <= 1:
                 return self.jsend({"ok": False, "error": "Cannot remove last destination"})
             pv  = body.get("path", "")
             dst = [x for x in dst if not x.startswith(pv + "|")]
-            write_conf(s, src, dst, exc)
+            write_conf(s, src, dst, exc, src_exc)
             return self.jsend({"ok": True})
 
         if p == "/api/excludes/add":
-            s, src, dst, exc = parse_conf()
+            s, src, dst, exc, src_exc = parse_conf()
             pattern = body.get("pattern", "").strip()
             if pattern and pattern not in exc:
-                exc.append(pattern); write_conf(s, src, dst, exc)
+                exc.append(pattern); write_conf(s, src, dst, exc, src_exc)
             return self.jsend({"ok": True})
 
         if p == "/api/excludes/remove":
-            s, src, dst, exc = parse_conf()
+            s, src, dst, exc, src_exc = parse_conf()
             pattern = body.get("pattern", "").strip()
             exc = [x for x in exc if x != pattern]
-            write_conf(s, src, dst, exc)
+            write_conf(s, src, dst, exc, src_exc)
+            return self.jsend({"ok": True})
+
+        if p == "/api/excludes/add-bulk":
+            # Body: {"patterns": ["p1", "p2", "p3"]}
+            s, src, dst, exc, src_exc = parse_conf()
+            patterns = body.get("patterns", [])
+            added = 0
+            for pat in patterns:
+                pat = pat.strip() if isinstance(pat, str) else ""
+                if pat and pat not in exc:
+                    exc.append(pat)
+                    added += 1
+            write_conf(s, src, dst, exc, src_exc)
+            return self.jsend({"ok": True, "added": added})
+
+        if p == "/api/source-excludes/set":
+            # Body: {"source_path": "/path", "patterns": ["p1", "p2"]}
+            # Replaces ALL per-source excludes for that path
+            s, src, dst, exc, src_exc = parse_conf()
+            src_path = body.get("source_path", "").strip()
+            patterns = [p.strip() for p in body.get("patterns", []) if isinstance(p, str) and p.strip()]
+            if src_path:
+                src_exc[src_path] = patterns
+                write_conf(s, src, dst, exc, src_exc)
+            return self.jsend({"ok": True})
+
+        if p == "/api/source-excludes/add":
+            # Body: {"source_path": "/path", "pattern": "p1"}
+            s, src, dst, exc, src_exc = parse_conf()
+            src_path = body.get("source_path", "").strip()
+            pattern  = body.get("pattern", "").strip()
+            if src_path and pattern:
+                if src_path not in src_exc:
+                    src_exc[src_path] = []
+                if pattern not in src_exc[src_path]:
+                    src_exc[src_path].append(pattern)
+                write_conf(s, src, dst, exc, src_exc)
+            return self.jsend({"ok": True})
+
+        if p == "/api/source-excludes/add-bulk":
+            # Body: {"source_path": "/path", "patterns": ["p1", "p2"]}
+            s, src, dst, exc, src_exc = parse_conf()
+            src_path = body.get("source_path", "").strip()
+            patterns = body.get("patterns", [])
+            added = 0
+            if src_path:
+                if src_path not in src_exc:
+                    src_exc[src_path] = []
+                for pat in patterns:
+                    pat = pat.strip() if isinstance(pat, str) else ""
+                    if pat and pat not in src_exc[src_path]:
+                        src_exc[src_path].append(pat)
+                        added += 1
+                write_conf(s, src, dst, exc, src_exc)
+            return self.jsend({"ok": True, "added": added})
+
+        if p == "/api/source-excludes/remove":
+            # Body: {"source_path": "/path", "pattern": "p1"}
+            s, src, dst, exc, src_exc = parse_conf()
+            src_path = body.get("source_path", "").strip()
+            pattern  = body.get("pattern", "").strip()
+            if src_path and src_path in src_exc:
+                src_exc[src_path] = [x for x in src_exc[src_path] if x != pattern]
+                write_conf(s, src, dst, exc, src_exc)
             return self.jsend({"ok": True})
 
         if p == "/api/schedule":
@@ -623,7 +752,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/dry-run":
             """Simulate a backup — count files that WOULD be archived without writing."""
-            s, src_entries, dsts, exc = parse_conf()
+            s, src_entries, dsts, exc, src_exc = parse_conf()
             source_path = body.get("source_path", "")
             results = []
             for entry in src_entries:
