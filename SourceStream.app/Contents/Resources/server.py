@@ -20,7 +20,26 @@ OUT_LOG   = LOGS_DIR / "backup.log"
 ERR_LOG   = LOGS_DIR / "error.log"
 STATUS    = SS_DIR / "status.json"
 SCRIPT    = APP_RES / "backup_engine.sh"
-GDRIVE    = Path.home() / "Library/CloudStorage/GoogleDrive-umasud.zmn@gmail.com/My Drive/Developer Backups"
+def _find_gdrive() -> Path:
+    """Auto-detect the Google Drive 'My Drive' folder for any user account."""
+    cs = Path.home() / "Library/CloudStorage"
+    if cs.is_dir():
+        # Glob all GoogleDrive-* entries (handles any email address)
+        for d in sorted(cs.glob("GoogleDrive-*")):
+            candidate = d / "My Drive" / "Developer Backups"
+            if (d / "My Drive").is_dir():
+                return candidate
+    # Legacy / older Drive versions
+    for legacy in [
+        Path.home() / "Google Drive" / "My Drive" / "Developer Backups",
+        Path.home() / "Google Drive" / "Developer Backups",
+    ]:
+        if legacy.parent.is_dir():
+            return legacy
+    # Fallback — read from config (will be populated after first setup)
+    return Path.home() / "Library/CloudStorage/GoogleDrive/My Drive/Developer Backups"
+
+GDRIVE = _find_gdrive()
 
 MIME = {".html": "text/html", ".js": "application/javascript",
         ".css": "text/css", ".json": "application/json", ".ico": "image/x-icon"}
@@ -119,9 +138,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p == "/api/health":
             c = {}
             c["script"]     = os.access(str(SCRIPT), os.X_OK)
-            c["drive"]      = GDRIVE.is_dir()
+            # Read first destination from config (or fall back to auto-detected Drive)
+            _, _src, _dst = parse_conf()
+            drive_path = Path(_dst[0].split("|")[0]) if _dst else GDRIVE
+            c["drive"]      = drive_path.is_dir()
             try:
-                cl = sh(["crontab", "-l"]).stdout
+                # crontab -l exits 1 with stderr noise on empty crontab — suppress stderr
+                result = subprocess.run(["crontab", "-l"], stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, text=True)
+                cl = result.stdout
                 c["cron"]       = "backup_engine" in cl or "sourcestream" in cl
                 c["cron_clean"] = ">/dev/null" not in cl
                 c["cron_entry"] = next(
@@ -140,7 +165,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 c["running"] = False; c["pid"] = None
             try:    c["error_bytes"] = ERR_LOG.stat().st_size
             except: c["error_bytes"] = 0
-            try:    c["archive_count"] = len(list(GDRIVE.glob("*.tar.gz")))
+            try:    c["archive_count"] = len(list(drive_path.glob("*.tar.gz")))
             except: c["archive_count"] = 0
             c["conf_path"]    = str(CONF)
             c["logs_path"]    = str(LOGS_DIR)
@@ -210,8 +235,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/analyze":
             res = {}
-            s, src, _ = parse_conf()
-            sources = [e.split("|")[0] for e in src] or ["/Users/masud/Developer"]
+            s, src, dst_entries = parse_conf()
+            sources = [e.split("|")[0] for e in src] or [str(Path.home() / "Developer")]
+            # Use first configured destination for drive stats (any user, any path)
+            drive_path_analyze = Path(dst_entries[0].split("|")[0]) if dst_entries else GDRIVE
             try:
                 total_kb = 0
                 for sp in sources:
@@ -222,7 +249,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 res["raw_mb"] = 0; res["est_mb"] = 0
             try:
-                df  = sh(["df", "-k", str(GDRIVE)]).stdout.splitlines()[1].split()
+                df  = sh(["df", "-k", str(drive_path_analyze)]).stdout.splitlines()[1].split()
                 res["drive_free_mb"]  = int(df[3]) // 1024
                 res["drive_total_mb"] = int(df[1]) // 1024
             except Exception:
@@ -252,24 +279,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/archives":
             archs = []
+            # Read destinations from config — works for any user's setup
+            _, _src, dsts = parse_conf()
+            # Fall back to auto-detected drive if config has no destinations yet
+            dest_list = [(d.split("|")[0], d.split("|")[1] if "|" in d else "Drive") for d in dsts] \
+                        if dsts else [(str(GDRIVE), "Google Drive")]
             try:
-                for f in sorted(GDRIVE.glob("*.tar.gz"),
-                                key=lambda x: x.stat().st_mtime, reverse=True):
-                    st      = f.stat()
-                    created = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-                    archs.append({
-                        "name":        f.name,
-                        "size_mb":     int(st.st_size / 1024 / 1024),
-                        "destination": "Google Drive",
-                        "created":     created,
-                    })
+                for dest_path, dest_label in dest_list:
+                    dest = Path(dest_path)
+                    if not dest.is_dir():
+                        continue
+                    for f in sorted(dest.glob("*.tar.gz"),
+                                    key=lambda x: x.stat().st_mtime, reverse=True):
+                        st      = f.stat()
+                        created = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                        archs.append({
+                            "name":        f.name,
+                            "size_mb":     int(st.st_size / 1024 / 1024),
+                            "destination": dest_label,
+                            "created":     created,
+                        })
             except Exception:
                 pass
             return self.jsend(archs)
 
         if p == "/api/cron":
             try:
-                cl    = sh(["crontab", "-l"]).stdout
+                result = subprocess.run(["crontab", "-l"], stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, text=True)
+                cl    = result.stdout
                 entry = next(
                     (l for l in cl.splitlines() if "backup_engine" in l or "sourcestream" in l), ""
                 )

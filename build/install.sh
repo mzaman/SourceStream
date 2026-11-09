@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # install.sh — SourceStream Installer
-# /Users/masud/Developer/SourceStream/build/install.sh
+# /path/to/SourceStream/build/install.sh
 #
 # Installs SourceStream to /Applications, sets up LaunchAgent, and places
 # a launcher on the Desktop. Safe to run again for updates.
@@ -78,7 +78,19 @@ ok "Data directories: $SS_DIR"
 
 # ── 7. Write default config (preserve existing) ───────────────────────────────
 if [ ! -f "$CONF_FILE" ]; then
-    cat > "$CONF_FILE" << 'CONF'
+    # Auto-detect Google Drive path (any email, any user)
+    GDRIVE_PATH=""
+    if [ -d "$HOME/Library/CloudStorage" ]; then
+        for d in "$HOME/Library/CloudStorage/GoogleDrive-"*/; do
+            [ -d "${d}My Drive" ] && { GDRIVE_PATH="${d}My Drive/Developer Backups"; break; }
+        done
+    fi
+    [ -z "$GDRIVE_PATH" ] && [ -d "$HOME/Google Drive/My Drive" ] && \
+        GDRIVE_PATH="$HOME/Google Drive/My Drive/Developer Backups"
+    [ -z "$GDRIVE_PATH" ] && \
+        GDRIVE_PATH="$HOME/Library/CloudStorage/GoogleDrive/My Drive/Developer Backups"
+
+    cat > "$CONF_FILE" << CONF
 # SourceStream Configuration
 # ~/.sourcestream/config/sourcestream.conf
 # Managed by SourceStream Dashboard or edited manually.
@@ -88,12 +100,13 @@ DIRECT_TO_DRIVE=true
 MAX_ARCHIVES_TO_KEEP=3
 
 [sources]
-/Users/masud/Developer|Developer
+$HOME/Developer|Developer
 
 [destinations]
-/Users/masud/Library/CloudStorage/GoogleDrive-umasud.zmn@gmail.com/My Drive/Developer Backups|Google Drive
+$GDRIVE_PATH|Google Drive
 CONF
     ok "Default config written: $CONF_FILE"
+    inf "Auto-detected destination: $GDRIVE_PATH"
 else
     ok "Config preserved: $CONF_FILE"
 fi

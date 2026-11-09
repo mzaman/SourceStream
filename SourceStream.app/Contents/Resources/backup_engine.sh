@@ -44,11 +44,31 @@ MAX_ARCHIVES_TO_KEEP=3
 SOURCE_ENTRIES=()
 DEST_ENTRIES=()
 
+# ── Auto-detect Google Drive path (any user, any Google account) ───────────────
+detect_gdrive() {
+    local cs="$HOME/Library/CloudStorage"
+    if [ -d "$cs" ]; then
+        # Pick first GoogleDrive-* folder found (handles any email address)
+        local d
+        for d in "$cs"/GoogleDrive-*/; do
+            [ -d "${d}My Drive" ] && { echo "${d}My Drive/Developer Backups"; return; }
+        done
+    fi
+    # Legacy Google Drive location
+    for d in "$HOME/Google Drive/My Drive" "$HOME/Google Drive"; do
+        [ -d "$d" ] && { echo "$d/Developer Backups"; return; }
+    done
+    # Fallback — user will configure via Dashboard
+    echo "$HOME/Library/CloudStorage/GoogleDrive/My Drive/Developer Backups"
+}
+
 # ── Initialize config if missing ──────────────────────────────────────────────
 initialize_config() {
     if [ ! -f "$CONF_FILE" ]; then
         mkdir -p "$(dirname "$CONF_FILE")"
-        cat > "$CONF_FILE" << 'CONF'
+        local DEFAULT_GDRIVE
+        DEFAULT_GDRIVE="$(detect_gdrive)"
+        cat > "$CONF_FILE" << CONF
 # SourceStream Configuration
 # ~/.sourcestream/config/sourcestream.conf
 # Managed by SourceStream Dashboard or edited manually.
@@ -58,12 +78,13 @@ DIRECT_TO_DRIVE=true
 MAX_ARCHIVES_TO_KEEP=3
 
 [sources]
-/Users/masud/Developer|Developer
+$HOME/Developer|Developer
 
 [destinations]
-/Users/masud/Library/CloudStorage/GoogleDrive-umasud.zmn@gmail.com/My Drive/Developer Backups|Google Drive
+$DEFAULT_GDRIVE|Google Drive
 CONF
         log_msg "INFO" "Created default config: $CONF_FILE"
+        log_msg "INFO" "   Auto-detected destination: $DEFAULT_GDRIVE"
     fi
 }
 
