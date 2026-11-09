@@ -1,0 +1,61 @@
+#!/bin/bash
+# ============================================================
+# SourceStream  —  MacOS/SourceStream  (app bundle entry point)
+# This thin launcher is what macOS executes when you open the
+# .app.  It:
+#   1. Locates the bundled Python server inside Resources/
+#   2. Starts or checks the LaunchAgent (auto-start at login)
+#   3. Opens the dashboard in Chrome app-mode
+# ============================================================
+
+BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RESOURCES="$BUNDLE_DIR/Resources"
+LOGS_DIR="$HOME/.sourcestream/logs"
+SERVER_PY="$RESOURCES/server.py"
+PYTHON="/opt/homebrew/bin/python3"
+PORT=7474
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+# Fallback Python if homebrew not present
+[ ! -f "$PYTHON" ] && PYTHON="/usr/bin/python3"
+
+mkdir -p "$LOGS_DIR"
+
+# ── Install LaunchAgent on first run ──────────────────────────────────────────
+PLIST_SRC="$BUNDLE_DIR/Library/LaunchAgents/com.sourcestream.server.plist"
+PLIST_DEST="$HOME/Library/LaunchAgents/com.sourcestream.server.plist"
+if [ ! -f "$PLIST_DEST" ]; then
+    # Stamp in the actual Python and server paths
+    sed \
+        -e "s|__PYTHON__|$PYTHON|g" \
+        -e "s|__SERVER_PY__|$SERVER_PY|g" \
+        -e "s|__LOGS_DIR__|$LOGS_DIR|g" \
+        "$PLIST_SRC" > "$PLIST_DEST"
+    launchctl load "$PLIST_DEST" 2>/dev/null
+fi
+
+# ── Ensure server is running ──────────────────────────────────────────────────
+if ! curl -s --max-time 1 "http://127.0.0.1:$PORT/api/health" > /dev/null 2>&1; then
+    # Try to start via launchctl first
+    launchctl start com.sourcestream.server 2>/dev/null
+    sleep 2
+    # If still not up, start directly
+    if ! curl -s --max-time 1 "http://127.0.0.1:$PORT/api/health" > /dev/null 2>&1; then
+        "$PYTHON" "$SERVER_PY" >> "$LOGS_DIR/server.log" 2>&1 &
+        sleep 2
+    fi
+fi
+
+# ── Open dashboard in Chrome app-mode ─────────────────────────────────────────
+if [ -f "$CHROME" ]; then
+    "$CHROME" \
+        --app="http://127.0.0.1:$PORT/" \
+        --window-size=1300,840 \
+        --no-first-run \
+        --disable-extensions \
+        2>/dev/null &
+else
+    # Fallback: default browser
+    open "http://127.0.0.1:$PORT/"
+fi
+

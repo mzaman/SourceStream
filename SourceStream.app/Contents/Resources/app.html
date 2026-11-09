@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⚡ SourceStream</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--sidebar:#0a0e18;--card:#161b27;--card2:#1c2235;
+  --border:#222d45;--border2:#2d3a55;
+  --green:#22c55e;--amber:#f59e0b;--red:#ef4444;--blue:#3b82f6;--purple:#a855f7;--cyan:#06b6d4;
+  --text:#e2e8f0;--muted:#64748b;--dim:#94a3b8;
+  --r:10px;--rs:6px;
+  --sidebar-w:230px;--topbar-h:52px;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;font-size:14px}
+
+/* ── SIDEBAR ── */
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:var(--sidebar-w);
+  background:var(--sidebar);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;z-index:50}
+.sidebar-logo{padding:18px 16px 14px;border-bottom:1px solid var(--border)}
+.logo-title{font-size:1.3rem;font-weight:800;letter-spacing:-.5px}
+.logo-title span{color:var(--blue)}
+.logo-sub{font-size:.68rem;color:var(--muted);margin-top:2px}
+.sidebar-nav{flex:1;overflow-y:auto;padding:10px 8px}
+.nav-section{font-size:.6rem;font-weight:700;color:var(--muted);letter-spacing:.1em;
+  text-transform:uppercase;padding:14px 10px 6px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--rs);
+  color:var(--muted);font-size:.82rem;font-weight:600;cursor:pointer;
+  transition:all .15s;margin-bottom:2px;user-select:none}
+.nav-item:hover{background:rgba(59,130,246,.08);color:var(--dim)}
+.nav-item.active{background:rgba(59,130,246,.14);color:var(--blue)}
+.nav-icon{font-size:1rem;width:20px;text-align:center;flex-shrink:0}
+.nav-badge{margin-left:auto;background:var(--red);color:#fff;
+  font-size:.6rem;font-weight:700;border-radius:999px;padding:1px 6px;min-width:18px;text-align:center}
+.sidebar-footer{padding:12px 10px;border-top:1px solid var(--border)}
+.conn-pill{display:flex;align-items:center;gap:6px;padding:6px 10px;
+  border-radius:var(--rs);font-size:.72rem;font-weight:600}
+.conn-live{background:rgba(34,197,94,.1);color:var(--green)}
+.conn-off {background:rgba(239,68,68,.1);color:var(--red)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.pulse{animation:pulse 1.6s ease infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+
+/* ── MAIN LAYOUT ── */
+.main{margin-left:var(--sidebar-w);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.topbar{height:var(--topbar-h);background:var(--sidebar);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;padding:0 24px;flex-shrink:0}
+.page-title{font-size:1rem;font-weight:700}
+.topbar-right{display:flex;align-items:center;gap:10px}
+.ts{font-size:.72rem;color:var(--muted)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:var(--rs);
+  font-size:.78rem;font-weight:600;cursor:pointer;transition:all .2s;border:1px solid transparent}
+.btn-primary{background:rgba(59,130,246,.15);border-color:rgba(59,130,246,.35);color:var(--blue)}
+.btn-primary:hover{background:rgba(59,130,246,.25)}
+.btn-danger{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:var(--red)}
+.btn-danger:hover{background:rgba(239,68,68,.22)}
+.btn-success{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.3);color:var(--green)}
+.btn-success:hover{background:rgba(34,197,94,.22)}
+.btn-muted{background:rgba(255,255,255,.04);border-color:var(--border);color:var(--dim)}
+.btn-muted:hover{background:rgba(255,255,255,.08)}
+.btn-lg{padding:12px 24px;font-size:.95rem;border-radius:var(--r)}
+.spinner{width:12px;height:12px;border:2px solid rgba(59,130,246,.2);
+  border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── PAGE CONTAINER ── */
+.pages{flex:1;overflow-y:auto;padding:24px}
+.page{display:none}.page.active{display:block}
+.section-label{font-size:.68rem;font-weight:700;letter-spacing:.1em;
+  color:var(--muted);text-transform:uppercase;margin-bottom:12px}
+
+/* ── CARDS ── */
+.cards4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.cards2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:22px}
+@media(max-width:1100px){.cards4{grid-template-columns:repeat(2,1fr)}}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:18px}
+.card-label{font-size:.68rem;font-weight:700;letter-spacing:.07em;color:var(--muted);
+  text-transform:uppercase;margin-bottom:10px}
+.card-val{font-size:1.8rem;font-weight:800;line-height:1}
+.card-sub{font-size:.74rem;color:var(--muted);margin-top:7px}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:20px;margin-bottom:20px}
+.panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.panel-title{font-size:.85rem;font-weight:700}
+
+/* ── PILLS ── */
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;
+  border-radius:999px;font-size:.72rem;font-weight:700}
+.p-g{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.2)}
+.p-b{background:rgba(59,130,246,.12);color:var(--blue);border:1px solid rgba(59,130,246,.2)}
+.p-a{background:rgba(245,158,11,.12);color:var(--amber);border:1px solid rgba(245,158,11,.2)}
+.p-r{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.2)}
+.p-p{background:rgba(168,85,247,.12);color:var(--purple);border:1px solid rgba(168,85,247,.2)}
+
+/* ── BARS ── */
+.bar-wrap{background:rgba(255,255,255,.06);border-radius:999px;height:5px;overflow:hidden;margin:6px 0 4px}
+.bar-fill{height:100%;border-radius:999px;transition:width .4s ease}
+.bar-lbl{display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted)}
+
+/* ── ROW ITEMS ── */
+.row-item{background:var(--card2);border:1px solid var(--border);border-radius:var(--rs);padding:12px 14px;margin-bottom:10px}
+.row-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.row-name{font-size:.82rem;font-weight:700}
+.row-path{font-size:.68rem;color:var(--muted);word-break:break-all;margin-bottom:6px}
+
+/* ── TABLE ── */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.78rem}
+thead th{background:var(--card2);padding:9px 14px;text-align:left;font-size:.65rem;
+  font-weight:700;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;
+  border-bottom:1px solid var(--border);white-space:nowrap}
+tbody tr{border-bottom:1px solid var(--border);transition:background .12s}
+tbody tr:hover{background:rgba(255,255,255,.025)}
+tbody td{padding:9px 14px;color:var(--dim)}
+tbody td:first-child{color:var(--text);font-family:monospace;font-size:.74rem}
+.no-data{text-align:center;color:var(--muted);padding:28px;font-size:.82rem}
+
+/* ── LOG ── */
+.log-wrap{background:var(--card2);border:1px solid var(--border);border-radius:var(--rs);
+  padding:14px 16px;max-height:340px;overflow-y:auto;
+  font-family:'Fira Mono',monospace;font-size:.72rem;line-height:1.75}
+.ll-i{color:#64748b}.ll-s{color:var(--green)}.ll-e{color:var(--red)}.ll-w{color:var(--amber)}
+
+/* ── BACKUP PAGE ── */
+.backup-actions{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+.backup-btn-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
+  padding:28px 24px;text-align:center;cursor:pointer;transition:all .2s}
+.backup-btn-card:hover{border-color:var(--blue);background:rgba(59,130,246,.06)}
+.backup-btn-icon{font-size:2.4rem;margin-bottom:12px}
+.backup-btn-title{font-size:.95rem;font-weight:700;margin-bottom:6px}
+.backup-btn-desc{font-size:.75rem;color:var(--muted);line-height:1.5}
+.running-banner{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);
+  border-radius:var(--r);padding:16px 20px;margin-bottom:20px;
+  display:none;align-items:center;justify-content:space-between;gap:12px}
+.running-banner.show{display:flex}
+.backup-btn-card.disabled{opacity:.4;cursor:not-allowed;pointer-events:none}
+@keyframes shimmer{0%,100%{opacity:1}50%{opacity:.65}}
+
+/* ── HEALTH ── */
+.health-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.health-item{background:var(--card2);border:1px solid var(--border);border-radius:var(--rs);
+  padding:14px 16px;display:flex;align-items:center;gap:14px}
+.health-icon{font-size:1.4rem;flex-shrink:0}
+.health-label{font-size:.8rem;font-weight:600;margin-bottom:3px}
+.health-value{font-size:.72rem;color:var(--muted)}
+
+/* ── SCHEDULE ── */
+.sched-presets{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}
+.preset-btn{background:var(--card2);border:1px solid var(--border);border-radius:var(--rs);
+  padding:12px 14px;cursor:pointer;transition:all .15s;text-align:left}
+.preset-btn:hover,.preset-btn.selected{border-color:var(--blue);background:rgba(59,130,246,.08)}
+.preset-cron{font-family:monospace;font-size:.72rem;color:var(--blue);margin-bottom:4px}
+.preset-label{font-size:.78rem;font-weight:600}
+
+/* ── SETTINGS ── */
+.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.form-group{margin-bottom:16px}
+.form-label{font-size:.72rem;font-weight:700;color:var(--dim);letter-spacing:.05em;
+  text-transform:uppercase;margin-bottom:7px;display:block}
+.form-input{width:100%;background:var(--card2);border:1px solid var(--border);border-radius:var(--rs);
+  color:var(--text);padding:9px 12px;font-size:.82rem;outline:none;transition:border-color .15s}
+.form-input:focus{border-color:var(--blue)}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;
+  background:var(--card2);border:1px solid var(--border);border-radius:var(--rs);padding:12px 14px}
+.toggle-label{font-size:.82rem;font-weight:600}
+.toggle-desc{font-size:.7rem;color:var(--muted);margin-top:2px}
+.toggle{position:relative;width:40px;height:22px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0;position:absolute}
+.toggle-track{position:absolute;top:0;left:0;right:0;bottom:0;border-radius:999px;
+  background:var(--border2);transition:.2s;cursor:pointer}
+.toggle input:checked+.toggle-track{background:var(--blue)}
+.toggle-track::before{content:'';position:absolute;width:16px;height:16px;top:3px;left:3px;
+  border-radius:50%;background:#fff;transition:.2s}
+.toggle input:checked+.toggle-track::before{transform:translateX(18px)}
+
+/* ── TABS ── */
+.tabs{display:flex;gap:2px;background:var(--card2);border-radius:var(--rs);padding:3px;margin-bottom:16px;width:fit-content}
+.tab{padding:6px 16px;border-radius:calc(var(--rs) - 2px);font-size:.78rem;font-weight:600;
+  color:var(--muted);cursor:pointer;transition:all .15s}
+.tab.active{background:var(--card);color:var(--text)}
+
+/* ── TOAST ── */
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r);
+  padding:10px 20px;font-size:.8rem;font-weight:600;z-index:999;
+  transition:transform .3s ease;pointer-events:none;display:flex;align-items:center;gap:8px;
+  box-shadow:0 4px 24px rgba(0,0,0,.4)}
+#toast.show{transform:translateX(-50%) translateY(0)}
+#toast.toast-success{border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.08)}
+#toast.toast-error  {border-color:rgba(239,68,68,.4); background:rgba(239,68,68,.08)}
+#toast.toast-warn   {border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.08)}
+
+/* ── MISC ── */
+.empty{text-align:center;padding:36px;color:var(--muted);font-size:.85rem}
+.fade{animation:fadeIn .3s ease}
+@keyframes fadeIn{from{opacity:.4}to{opacity:1}}
+.mt{margin-top:16px}.mb{margin-bottom:16px}
+.flex{display:flex;align-items:center;gap:10px}
+.ml-auto{margin-left:auto}
+.w-full{width:100%}
+.text-muted{color:var(--muted)}
+.text-sm{font-size:.75rem}
+code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
+  padding:1px 6px;font-family:monospace;font-size:.72rem;color:var(--dim)}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════ SIDEBAR ══════════════════════════ -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-title">⚡ Source<span>Stream</span></div>
+    <div class="logo-sub">Developer Backup Utility v1.0</div>
+  </div>
+
+  <nav class="sidebar-nav">
+    <div class="nav-section">Overview</div>
+    <div class="nav-item active" data-page="dashboard" onclick="go('dashboard')">
+      <span class="nav-icon">📊</span>Dashboard
+    </div>
+    <div class="nav-item" data-page="backup" onclick="go('backup')">
+      <span class="nav-icon">🚀</span>Run Backup
+    </div>
+
+    <div class="nav-section">Data</div>
+    <div class="nav-item" data-page="archives" onclick="go('archives')">
+      <span class="nav-icon">🗄️</span>Archives
+    </div>
+    <div class="nav-item" data-page="logs" onclick="go('logs')">
+      <span class="nav-icon">📋</span>Logs
+      <span class="nav-badge" id="err-nav-badge" style="display:none">!</span>
+    </div>
+
+    <div class="nav-section">System</div>
+    <div class="nav-item" data-page="health" onclick="go('health')">
+      <span class="nav-icon">🩺</span>Health Check
+    </div>
+    <div class="nav-item" data-page="schedule" onclick="go('schedule')">
+      <span class="nav-icon">📅</span>Schedule
+    </div>
+
+    <div class="nav-section">Config</div>
+    <div class="nav-item" data-page="settings" onclick="go('settings')">
+      <span class="nav-icon">⚙️</span>Settings
+    </div>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="conn-pill conn-off" id="conn-pill">
+      <span class="dot" id="conn-dot"></span>
+      <span id="conn-label">Connecting…</span>
+    </div>
+    <div style="font-size:.64rem;color:var(--muted);margin-top:8px;padding:0 2px">
+      Auto-refresh 10s · <span id="footer-ts">—</span>
+    </div>
+    <div style="font-size:.6rem;color:var(--muted);margin-top:5px;padding:0 2px;opacity:.6">
+      SourceStream v1.0 · <kbd style="background:var(--card2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:.58rem">⌘R</kbd> refresh
+    </div>
+  </div>
+</aside>
+
+<!-- ══════════════════════════ MAIN ══════════════════════════ -->
+<div class="main">
+
+  <header class="topbar">
+    <span class="page-title" id="page-title">Dashboard</span>
+    <div class="topbar-right">
+      <span class="ts" id="last-updated">—</span>
+      <button class="btn btn-primary" onclick="manualRefresh()">
+        <div class="spinner" id="spinner" style="display:none"></div>
+        🔄 Refresh
+      </button>
+    </div>
+  </header>
+
+  <div class="pages">
+
+    <!-- ══════════════ DASHBOARD ══════════════ -->
+    <div class="page active" id="pg-dashboard">
+      <div class="section-label">System Overview</div>
+      <div class="cards4" id="dash-cards">
+        <div class="card"><div class="card-label">Engine Status</div><div class="card-val" id="d-engine" style="margin-top:4px">—</div><div class="card-sub" id="d-pid">—</div></div>
+        <div class="card"><div class="card-label">Last Backup</div><div class="card-val" id="d-last" style="margin-top:4px">—</div><div class="card-sub" id="d-last-t">—</div></div>
+        <div class="card"><div class="card-label">Archives</div><div class="card-val" id="d-arch">—</div><div class="card-sub" id="d-arch-s">—</div></div>
+        <div class="card"><div class="card-label">SSD Footprint</div><div class="card-val" id="d-ssd" style="font-size:1.1rem;margin-top:6px">—</div><div class="card-sub" id="d-err">—</div></div>
+      </div>
+
+      <div class="cards2">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">📁 Sources</span><span id="src-cnt" class="pill p-b">—</span></div>
+          <div id="src-list"><div class="empty">Loading…</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">📍 Destinations</span><span id="dst-cnt" class="pill p-p">—</span></div>
+          <div id="dst-list"><div class="empty">Loading…</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">📋 Recent Activity</span>
+          <span id="d-err-badge" class="pill p-g">✅ No errors</span>
+        </div>
+        <div class="log-wrap" id="d-log"><span class="ll-i">Loading…</span></div>
+      </div>
+    </div>
+
+    <!-- ══════════════ BACKUP ══════════════ -->
+    <div class="page" id="pg-backup">
+      <!-- Running banner (dashboard/top) -->
+      <div class="running-banner" id="running-banner">
+        <div class="flex">
+          <span style="font-size:1.2rem">⏳</span>
+          <div>
+            <div style="font-weight:700;color:var(--amber)">Backup in progress</div>
+            <div class="text-sm text-muted" id="run-pid">—</div>
+          </div>
+        </div>
+        <button class="btn btn-danger" onclick="cancelBackup()">⛔ Cancel</button>
+      </div>
+
+      <!-- Progress section (shown while backup runs) -->
+      <div id="progress-section" style="display:none" class="panel" >
+        <div class="panel-head" style="margin-bottom:14px">
+          <div>
+            <span class="panel-title">⏳ Backup in Progress</span>
+          </div>
+          <button class="btn btn-danger" onclick="cancelBackup()">⛔ Cancel</button>
+        </div>
+        <div style="margin-bottom:14px">
+          <div class="flex" style="justify-content:space-between;margin-bottom:7px">
+            <span id="prog-label" style="font-size:.82rem;font-weight:600;color:var(--amber)">Compressing…</span>
+            <span id="prog-pct" style="font-size:.88rem;font-weight:800;color:var(--blue)">0%</span>
+          </div>
+          <div class="bar-wrap" style="height:12px;border-radius:var(--rs);overflow:hidden">
+            <div class="bar-fill" id="prog-bar" style="width:0%;background:linear-gradient(90deg,var(--blue),var(--cyan));transition:width .8s ease;animation:shimmer 2s infinite"></div>
+          </div>
+          <div class="flex" style="justify-content:space-between;margin-top:6px">
+            <span id="prog-size" class="text-sm text-muted">— / ~—</span>
+            <span id="prog-elapsed" class="text-sm text-muted">0s elapsed</span>
+          </div>
+        </div>
+        <div class="log-wrap" id="progress-log" style="max-height:160px"><span class="ll-i">Starting…</span></div>
+      </div>
+
+      <div class="backup-actions">
+        <div class="backup-btn-card" onclick="runBackup(false)">
+          <div class="backup-btn-icon">🚀</div>
+          <div class="backup-btn-title">Run Backup Now</div>
+          <div class="backup-btn-desc">Launch engine in background.<br>No notification on completion.</div>
+        </div>
+        <div class="backup-btn-card" onclick="runBackup(true)">
+          <div class="backup-btn-icon">🔔</div>
+          <div class="backup-btn-title">Run + Notify</div>
+          <div class="backup-btn-desc">Run backup and send a macOS<br>Glass notification when done.</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">🔎 Storage Analysis</span>
+          <button class="btn btn-muted" onclick="runAnalyze()" id="analyze-btn">Analyze Now</button>
+        </div>
+        <div id="analyze-result"><div class="empty text-muted">Click "Analyze Now" to scan your project sizes and free space</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">🖥 Live Log Feed</span>
+          <div class="flex">
+            <button class="btn btn-muted" onclick="loadBackupLog()">↻ Refresh</button>
+            <button class="btn btn-muted" onclick="clearTmp()">🧹 Clear /tmp</button>
+          </div>
+        </div>
+        <div class="log-wrap" id="backup-log"><span class="ll-i">Click Refresh to load latest log entries…</span></div>
+      </div>
+    </div>
+
+    <!-- ══════════════ ARCHIVES ══════════════ -->
+    <div class="page" id="pg-archives">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">🗄️ Backup Archives</span>
+          <div class="flex">
+            <span id="arch-cnt" class="pill p-b">0 files</span>
+            <button class="btn btn-muted" onclick="loadArchives()">↻ Refresh</button>
+          </div>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Archive Name</th><th>Size</th><th>Destination</th><th>Created</th><th>Age</th></tr></thead>
+            <tbody id="arch-tbody"><tr><td colspan="5" class="no-data">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ LOGS ══════════════ -->
+    <div class="page" id="pg-logs">
+      <div class="panel">
+        <div class="panel-head">
+          <div class="tabs">
+            <div class="tab active" id="tab-out" onclick="switchLog('output')">Output Log</div>
+            <div class="tab" id="tab-err" onclick="switchLog('error')">Error Log <span id="err-badge-cnt" class="pill p-r" style="font-size:.6rem;padding:1px 6px"></span></div>
+          </div>
+          <div class="flex">
+            <button class="btn btn-muted" onclick="loadLogs()">↻ Refresh</button>
+            <button class="btn btn-muted" onclick="rotateLogs()">🗑 Rotate</button>
+          </div>
+        </div>
+        <div class="log-wrap" id="log-output" style="max-height:500px"><span class="ll-i">Loading…</span></div>
+        <div class="log-wrap" id="log-error" style="max-height:500px;display:none"><span class="ll-i">Loading…</span></div>
+      </div>
+    </div>
+
+    <!-- ══════════════ HEALTH ══════════════ -->
+    <div class="page" id="pg-health">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">🩺 System Health Check</span>
+          <button class="btn btn-muted" onclick="runHealth()">↻ Re-run</button>
+        </div>
+        <div class="health-grid" id="health-grid">
+          <div class="empty" style="grid-column:span 2">Running checks…</div>
+        </div>
+        <div style="margin-top:16px;font-size:.72rem;color:var(--muted)">
+          💡 If backup silently fails, grant <strong>Full Disk Access</strong> to Terminal in<br>
+          System Settings → Privacy &amp; Security → Full Disk Access.
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ SCHEDULE ══════════════ -->
+    <div class="page" id="pg-schedule">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">📅 Backup Schedule</span>
+          <span id="cron-status" class="pill p-b">—</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Current cron entry</label>
+          <code id="cron-current" style="display:block;padding:10px 14px;font-size:.8rem">—</code>
+        </div>
+
+        <div class="section-label mt" style="margin-top:16px">Select a preset</div>
+        <div class="sched-presets" id="sched-presets">
+          <div class="preset-btn" data-expr="0 23 * * 0" onclick="selectPreset(this)">
+            <div class="preset-cron">0 23 * * 0</div>
+            <div class="preset-label">🌙 Every Sunday at 11:00 PM</div>
+          </div>
+          <div class="preset-btn" data-expr="0 2 * * 0" onclick="selectPreset(this)">
+            <div class="preset-cron">0 2 * * 0</div>
+            <div class="preset-label">🌙 Every Sunday at 2:00 AM</div>
+          </div>
+          <div class="preset-btn" data-expr="0 23 * * 6" onclick="selectPreset(this)">
+            <div class="preset-cron">0 23 * * 6</div>
+            <div class="preset-label">🌙 Every Saturday at 11:00 PM</div>
+          </div>
+          <div class="preset-btn" data-expr="0 2 * * *" onclick="selectPreset(this)">
+            <div class="preset-cron">0 2 * * *</div>
+            <div class="preset-label">🌙 Every day at 2:00 AM</div>
+          </div>
+          <div class="preset-btn" data-expr="0 0 * * *" onclick="selectPreset(this)">
+            <div class="preset-cron">0 0 * * *</div>
+            <div class="preset-label">🌙 Every day at midnight</div>
+          </div>
+          <div class="preset-btn" data-expr="custom" onclick="selectPreset(this)">
+            <div class="preset-cron">✏️ custom</div>
+            <div class="preset-label">Custom expression…</div>
+          </div>
+        </div>
+
+        <div id="custom-cron-row" class="form-group" style="display:none">
+          <label class="form-label">Custom cron expression (5 fields)</label>
+          <input class="form-input" id="custom-cron-input" placeholder="0 23 * * 0  →  min hr dom mon dow">
+        </div>
+
+        <div class="flex mt">
+          <button class="btn btn-primary" onclick="applySchedule()">✅ Apply Schedule</button>
+          <button class="btn btn-danger" onclick="disableSchedule()">🚫 Disable Schedule</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ SETTINGS ══════════════ -->
+    <div class="page" id="pg-settings">
+      <div class="settings-grid">
+
+        <!-- Left col: general settings -->
+        <div>
+          <div class="panel">
+            <div class="panel-head"><span class="panel-title">⚙️ Preferences</span></div>
+
+            <div class="toggle-row mb" style="margin-bottom:12px">
+              <div>
+                <div class="toggle-label">Direct to Drive Mode</div>
+                <div class="toggle-desc">1× SSD footprint. Auto-disabled when multiple dests.</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="tog-direct" onchange="saveSetting('DIRECT_TO_DRIVE', this.checked?'true':'false')">
+                <div class="toggle-track"></div>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Max Archives to Keep (0 = unlimited)</label>
+              <div class="flex">
+                <input class="form-input" type="number" id="inp-keep" min="0" style="width:100px">
+                <button class="btn btn-primary" onclick="saveSetting('MAX_ARCHIVES_TO_KEEP', document.getElementById('inp-keep').value)">Save</button>
+              </div>
+            </div>
+
+            <div style="font-size:.72rem;color:var(--muted);margin-top:8px;padding:10px;background:var(--card2);border-radius:var(--rs)">
+              <div>Config: <code id="conf-path-display">~/.sourcestream/config/sourcestream.conf</code></div>
+              <div style="margin-top:4px">Logs: <code id="logs-path-display">~/.sourcestream/logs/</code></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right col: sources and destinations -->
+        <div>
+          <div class="panel">
+            <div class="panel-head">
+              <span class="panel-title">📁 Source Folders</span>
+              <button class="btn btn-muted" onclick="showAddSource()">+ Add</button>
+            </div>
+            <div id="settings-sources"><div class="empty">Loading…</div></div>
+            <div id="add-source-form" style="display:none" class="mt">
+              <div class="form-group">
+                <label class="form-label">Folder path</label>
+                <div class="flex" style="gap:8px;margin-bottom:8px">
+                  <input class="form-input" id="src-path-inp" placeholder="/Users/masud/Projects/MyApp" style="flex:1">
+                  <button class="btn btn-muted" onclick="browseFolderFor('src-path-inp','src-name-inp')" style="flex-shrink:0" title="Browse…">📂</button>
+                </div>
+                <label class="form-label">Display name</label>
+                <input class="form-input w-full" id="src-name-inp" placeholder="MyApp">
+              </div>
+              <div class="flex">
+                <button class="btn btn-success" onclick="addSource()">Add Source</button>
+                <button class="btn btn-muted" onclick="hideAddSource()">Cancel</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <span class="panel-title">📍 Destinations</span>
+              <button class="btn btn-muted" onclick="showAddDest()">+ Add</button>
+            </div>
+            <div id="settings-dests"><div class="empty">Loading…</div></div>
+            <div id="add-dest-form" style="display:none" class="mt">
+              <div class="form-group">
+                <label class="form-label">Destination path</label>
+                <div class="flex" style="gap:8px;margin-bottom:8px">
+                  <input class="form-input" id="dst-path-inp" placeholder="/Volumes/ExternalDrive/Backups" style="flex:1">
+                  <button class="btn btn-muted" onclick="browseFolderFor('dst-path-inp','dst-name-inp')" style="flex-shrink:0" title="Browse…">📂</button>
+                </div>
+                <label class="form-label">Label</label>
+                <input class="form-input w-full" id="dst-name-inp" placeholder="External Drive">
+              </div>
+              <div class="flex">
+                <button class="btn btn-success" onclick="addDest()">Add Destination</button>
+                <button class="btn btn-muted" onclick="hideAddDest()">Cancel</button>
+              </div>
+            </div>
+            <div class="text-sm text-muted" style="margin-top:10px">
+              ⚠️ 2+ destinations forces staging mode (/tmp buffer used)
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- /pages -->
+</div><!-- /main -->
+
+<div id="toast"></div>
+
+<script>
+// ── State & Config ────────────────────────────────────────────────────────────
+const BASE = 'http://127.0.0.1:7474';
+const PAGE_TITLES = {
+  dashboard:'Dashboard', backup:'Run Backup', archives:'Archives',
+  logs:'Logs', health:'Health Check', schedule:'Schedule', settings:'Settings'
+};
+let currentPage = 'dashboard';
+let status = null;
+let pollTimer = null;
+let selectedPreset = null;
+let activeLogTab = 'output';
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+const $  = id => document.getElementById(id);
+const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+function fmtMB(mb){
+  mb = Number(mb||0);
+  if (mb >= 1024) return (mb/1024).toFixed(1)+' GB';
+  return mb+' MB';
+}
+function ago(ds){
+  if (!ds) return '—';
+  const d = new Date(ds.replace(' ','T')); if(isNaN(d)) return ds;
+  const s = Math.floor((Date.now()-d)/1000);
+  if(s<60)   return s+'s ago';
+  if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400)return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
+}
+function pill(txt, cls){ return `<span class="pill ${cls}">${esc(txt)}</span>`; }
+function sPill(st){
+  st = String(st||'').toUpperCase();
+  if(st==='SUCCESS'||st==='ONLINE') return pill(st,'p-g');
+  if(st==='RUNNING')               return `<span class="pill p-a"><span class="dot pulse"></span>RUNNING</span>`;
+  if(st==='ERROR'||st==='OFFLINE') return pill(st,'p-r');
+  if(st==='IDLE')                  return pill('IDLE','p-b');
+  return pill(st,'p-b');
+}
+function logCls(l){
+  if(/SUCCESS/i.test(l)) return 'll-s';
+  if(/ERROR/i.test(l))   return 'll-e';
+  if(/WARN/i.test(l))    return 'll-w';
+  return 'll-i';
+}
+function barCol(pct){ return pct<60?'var(--green)':pct<85?'var(--amber)':'var(--red)'; }
+
+function toast(msg, type='info', duration=3000){
+  const el = $('toast');
+  const icon = type==='success'?'✅':type==='error'?'❌':type==='warn'?'⚠️':'ℹ️';
+  el.innerHTML = `${icon} ${esc(msg)}`;
+  el.className = 'show toast-'+type;
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>el.classList.remove('show'), duration);
+}
+
+async function api(method, endpoint, body=null){
+  try {
+    const opts = { method, headers:{'Content-Type':'application/json'} };
+    if(body) opts.body = JSON.stringify(body);
+    const r = await fetch(BASE+endpoint, opts);
+    return await r.json();
+  } catch(e) { return null; }
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function go(page){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  $('pg-'+page).classList.add('active');
+  document.querySelector(`[data-page="${page}"]`).classList.add('active');
+  $('page-title').textContent = PAGE_TITLES[page]||page;
+  currentPage = page;
+  if(page==='archives') loadArchives();
+  if(page==='logs')     loadLogs();
+  if(page==='health')   runHealth();
+  if(page==='schedule') loadSchedule();
+  if(page==='settings') loadSettings();
+  if(page==='backup')   loadBackupLog();
+}
+
+// ── Poll loop ─────────────────────────────────────────────────────────────────
+async function fetchStatus(){
+  $('spinner').style.display='inline-block';
+  try {
+    const r = await fetch(BASE+'/status.json?_='+Date.now(), {cache:'no-store'});
+    if(!r.ok) throw 0;
+    status = await r.json();
+    setConn(true);
+    renderDashboard(status);
+    updateRunningBanner(status);
+  } catch(e) {
+    setConn(false);
+  } finally {
+    $('spinner').style.display='none';
+  }
+}
+
+function setConn(live){
+  const p=$('conn-pill'), d=$('conn-dot'), l=$('conn-label');
+  p.className = 'conn-pill '+(live?'conn-live':'conn-off');
+  d.className = 'dot'+(live?' pulse':'');
+  l.textContent = live?'Live':'Offline';
+}
+
+function manualRefresh(){
+  fetchStatus();
+  if(currentPage==='archives') loadArchives();
+  if(currentPage==='logs')     loadLogs();
+  if(currentPage==='backup')   loadBackupLog();
+}
+
+// ── Dashboard render ──────────────────────────────────────────────────────────
+function renderDashboard(d){
+  const now = d.last_updated||'—';
+  $('last-updated').textContent = now;
+  $('footer-ts').textContent = now;
+
+  // Cards
+  const eng=(d.engine_status||'idle').toUpperCase();
+  if(eng==='RUNNING'){
+    $('d-engine').innerHTML=`<span class="pill p-a" style="font-size:.88rem;padding:6px 12px"><span class="dot pulse"></span>RUNNING</span>`;
+  } else if(eng==='ERROR'){
+    $('d-engine').innerHTML=`<span class="pill p-r" style="font-size:.88rem;padding:6px 12px">ERROR</span>`;
+  } else {
+    $('d-engine').innerHTML=`<span class="pill p-b" style="font-size:.88rem;padding:6px 12px">IDLE</span>`;
+  }
+  $('d-pid').textContent = d.pid?'PID '+d.pid:(eng==='RUNNING'?'Starting…':'No active process');
+  $('d-last').innerHTML = sPill(d.last_run_status||'UNKNOWN');
+  $('d-last-t').textContent = ago(d.last_run_start)+(d.last_run_duration_min?' · took '+d.last_run_duration_min+'m':'');
+
+  let totalArch=0, totalMB=0;
+  (d.archives||[]).forEach(a=>{totalArch++;totalMB+=Number(a.size_mb||0);});
+  $('d-arch').textContent = totalArch;
+  $('d-arch-s').textContent = fmtMB(totalMB)+' total';
+
+  $('d-ssd').innerHTML = d.direct_to_drive
+    ?'<span style="color:var(--green)">1× Direct</span>'
+    :'<span style="color:var(--amber)">2× Staging</span>';
+  const eb=Number(d.error_log_bytes||0);
+  $('d-err').innerHTML = eb===0
+    ?'<span style="color:var(--green)">✅ No errors</span>'
+    :`<span style="color:var(--amber)">⚠️ ${eb} bytes in error log</span>`;
+  if(eb>0){
+    $('err-nav-badge').style.display='inline-block';
+    $('err-badge-cnt').textContent = eb>999?Math.round(eb/1024)+'k':eb;
+  } else {
+    $('err-nav-badge').style.display='none';
+  }
+
+  // Sources
+  const srcs=d.sources||[];
+  $('src-cnt').textContent = srcs.length+' source'+(srcs.length!==1?'s':'');
+  $('src-list').innerHTML = srcs.length===0
+    ? '<div class="empty">No sources configured</div>'
+    : srcs.map(s=>{
+        const r=s.raw_mb>0?Math.round((s.archive_mb/s.raw_mb)*100):0;
+        return `<div class="row-item">
+          <div class="row-top"><span class="row-name">📁 ${esc(s.name)}</span>${sPill(s.status)}</div>
+          <div class="row-path">${esc(s.path)}</div>
+          <div class="bar-wrap"><div class="bar-fill" style="width:${r}%;background:var(--blue)"></div></div>
+          <div class="bar-lbl"><span>Raw: ${fmtMB(s.raw_mb)}</span><span>Archive: ${fmtMB(s.archive_mb)} (${r}%)</span></div>
+        </div>`;}).join('');
+
+  // Destinations
+  const dsts=d.destinations||[];
+  $('dst-cnt').textContent = dsts.length+' dest'+(dsts.length!==1?'s':'');
+  $('dst-list').innerHTML = dsts.length===0
+    ? '<div class="empty">No destinations configured</div>'
+    : dsts.map(dest=>{
+        const tot=Number(dest.total_mb||0)+Number(dest.free_mb||0);
+        const pct=tot>0?Math.min(100,Math.round((dest.total_mb/tot)*100)):0;
+        return `<div class="row-item">
+          <div class="row-top"><span class="row-name">📍 ${esc(dest.label)}</span>${sPill(dest.status)}</div>
+          <div class="row-path">${esc(dest.path)}</div>
+          <div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${barCol(pct)}"></div></div>
+          <div class="bar-lbl"><span>Used: ${fmtMB(dest.total_mb)} (${pct}%)</span><span>Free: ${fmtMB(dest.free_mb)} · ${dest.archive_count} archive(s)</span></div>
+        </div>`;}).join('');
+
+  // Log
+  const lines=d.recent_log||[];
+  $('d-log').innerHTML = lines.length===0
+    ? '<span class="ll-i">No log entries yet. Run the backup to generate output.</span>'
+    : [...lines].reverse().map(l=>`<div class="${logCls(l)}">${esc(l)}</div>`).join('');
+  $('d-log').scrollTop = 0;
+
+  $('d-err-badge').textContent = eb>0?`⚠️ ${eb} bytes in error log`:'✅ No errors';
+  $('d-err-badge').className = 'pill '+(eb>0?'p-a':'p-g');
+}
+
+// ── Running banner ────────────────────────────────────────────────────────────
+function updateRunningBanner(d){
+  const running = d && d.engine_status === 'running';
+  const banner = $('running-banner');
+  banner.classList.toggle('show', running);
+  if(running && d.pid) $('run-pid').textContent = 'PID '+d.pid+' · backup in progress';
+}
+
+// ── Backup actions ────────────────────────────────────────────────────────────
+let backupPollTimer = null;
+
+async function runBackup(notify){
+  // Disable cards while running
+  document.querySelectorAll('.backup-btn-card').forEach(c=>c.classList.add('disabled'));
+  $('progress-section').style.display = 'block';
+  $('progress-log').innerHTML = '<span class="ll-i">Launching backup engine…</span>';
+  $('prog-bar').style.width = '0%';
+  $('prog-pct').textContent = '0%';
+  $('prog-label').textContent = 'Compressing…';
+
+  const r = await api('POST', '/api/run-backup', {notify});
+  if(r && r.ok){
+    toast('Backup launched!', 'success');
+    if(backupPollTimer) clearInterval(backupPollTimer);
+    backupPollTimer = setInterval(pollProgress, 2000);
+    pollProgress();
+  } else {
+    toast('Failed to start backup', 'error');
+    resetBackupUI();
+  }
+}
+
+async function pollProgress(){
+  const r = await api('GET', '/api/progress');
+  if(!r) return;
+
+  // Update bar
+  const pct = r.pct||0;
+  $('prog-bar').style.width = pct+'%';
+  $('prog-pct').textContent = pct+'%';
+
+  // Update sizes
+  const cur = r.current_mb||0, est = r.estimated_mb||0;
+  $('prog-size').textContent = (cur ? fmtMB(cur) : '—') + ' / ~' + (est ? fmtMB(est) : '—');
+
+  // Update elapsed
+  const el = r.elapsed_sec||0;
+  if(el >= 3600) $('prog-elapsed').textContent = Math.floor(el/3600)+'h '+Math.floor((el%3600)/60)+'m elapsed';
+  else if(el >= 60) $('prog-elapsed').textContent = Math.floor(el/60)+'m '+el%60+'s elapsed';
+  else $('prog-elapsed').textContent = el+'s elapsed';
+
+  // Pull live log into progress panel
+  const logR = await api('GET', '/api/logs/output');
+  if(logR && logR.lines && logR.lines.length){
+    const recent = [...logR.lines].reverse().slice(0,15);
+    $('progress-log').innerHTML = recent.map(l=>`<div class="${logCls(l)}">${esc(l)}</div>`).join('');
+    $('progress-log').scrollTop = 0;
+  }
+
+  if(!r.running){
+    clearInterval(backupPollTimer); backupPollTimer=null;
+    $('prog-label').textContent = 'Finished';
+    setTimeout(resetBackupUI, 2000);
+    if(r.last_status==='SUCCESS' || pct>=95) toast('✅ Backup completed!','success');
+    else toast('⚠️ Backup finished — check the error log','error');
+    fetchStatus();
+    loadBackupLog();
+  }
+}
+
+async function cancelBackup(){
+  if(!confirm('Cancel the running backup?')) return;
+  if(backupPollTimer){ clearInterval(backupPollTimer); backupPollTimer=null; }
+  await api('POST', '/api/kill-backup');
+  toast('Backup cancelled','success');
+  resetBackupUI();
+  fetchStatus();
+}
+
+function resetBackupUI(){
+  document.querySelectorAll('.backup-btn-card').forEach(c=>c.classList.remove('disabled'));
+  $('progress-section').style.display = 'none';
+  $('prog-bar').style.width = '0%';
+  $('prog-pct').textContent = '0%';
+  $('prog-label').textContent = 'Compressing…';
+}
+
+async function killBackup(){
+  // Alias kept for running-banner button (dashboard page)
+  await cancelBackup();
+}
+
+async function clearTmp(){
+  const r = await api('POST', '/api/clear-tmp');
+  if(r) toast(`Removed ${r.removed} stuck archive(s) from /tmp`, 'success');
+}
+
+async function loadBackupLog(){
+  const r = await api('GET', '/api/logs/output');
+  if(!r){ $('backup-log').innerHTML='<span class="ll-i">Could not load log</span>'; return; }
+  const lines = r.lines||[];
+  $('backup-log').innerHTML = lines.length===0
+    ? '<span class="ll-i">Log is empty. Run a backup to generate output.</span>'
+    : [...lines].reverse().slice(0,60).map(l=>`<div class="${logCls(l)}">${esc(l)}</div>`).join('');
+  $('backup-log').scrollTop = 0;
+}
+
+async function runAnalyze(){
+  $('analyze-btn').textContent = 'Analyzing…';
+  $('analyze-result').innerHTML='<div class="empty">Scanning…</div>';
+  const r = await api('GET', '/api/analyze');
+  $('analyze-btn').textContent = 'Analyze Now';
+  if(!r){ $('analyze-result').innerHTML='<div class="empty">Analysis failed</div>'; return; }
+  const topHtml = (r.top_folders||[]).map(f=>
+    `<div class="flex" style="justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:.78rem">${esc(f.name)}</span>
+      <span class="text-sm text-muted">${fmtMB(f.size_mb)}</span>
+    </div>`).join('');
+  const pct = r.drive_total_mb>0?Math.round(((r.drive_total_mb-r.drive_free_mb)/r.drive_total_mb)*100):0;
+  $('analyze-result').innerHTML=`
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+      <div class="row-item" style="text-align:center">
+        <div class="card-label">Raw Source</div>
+        <div style="font-size:1.3rem;font-weight:800">${fmtMB(r.raw_mb)}</div>
+      </div>
+      <div class="row-item" style="text-align:center">
+        <div class="card-label">Est. Archive</div>
+        <div style="font-size:1.3rem;font-weight:800;color:var(--blue)">~${fmtMB(r.est_mb)}</div>
+      </div>
+      <div class="row-item" style="text-align:center">
+        <div class="card-label">Drive Free</div>
+        <div style="font-size:1.3rem;font-weight:800;color:${r.drive_free_mb>r.est_mb?'var(--green)':'var(--red)'}">
+          ${fmtMB(r.drive_free_mb)}
+        </div>
+      </div>
+    </div>
+    <div class="row-item" style="margin-bottom:12px">
+      <div class="bar-lbl mb" style="margin-bottom:4px"><span>Google Drive usage</span><span>${pct}% used</span></div>
+      <div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${barCol(pct)}"></div></div>
+      <div class="text-sm text-muted mt" style="margin-top:6px">
+        ${r.excluded_dirs} cache dirs excluded (node_modules, vendor, .gradle…)
+      </div>
+    </div>
+    <div class="section-label">Top Project Folders</div>
+    ${topHtml||'<div class="empty">No data</div>'}`;
+}
+
+// ── Archives ──────────────────────────────────────────────────────────────────
+async function loadArchives(){
+  $('arch-tbody').innerHTML='<tr><td colspan="5" class="no-data">Loading…</td></tr>';
+  const r = await api('GET', '/api/archives');
+  if(!r||!r.length){
+    $('arch-tbody').innerHTML='<tr><td colspan="5" class="no-data">No archives found</td></tr>';
+    $('arch-cnt').textContent='0 files'; return;
+  }
+  $('arch-cnt').textContent=r.length+' file'+(r.length!==1?'s':'');
+  $('arch-tbody').innerHTML=r.map(a=>`<tr>
+    <td>${esc(a.name)}</td>
+    <td>${fmtMB(a.size_mb)}</td>
+    <td>${pill(a.destination,'p-p')}</td>
+    <td style="color:var(--dim)">${esc(a.created||'—')}</td>
+    <td style="color:var(--muted)">${ago(a.created)}</td>
+  </tr>`).join('');
+}
+
+// ── Logs ──────────────────────────────────────────────────────────────────────
+function switchLog(tab){
+  activeLogTab = tab;
+  $('tab-out').classList.toggle('active', tab==='output');
+  $('tab-err').classList.toggle('active', tab==='error');
+  $('log-output').style.display = tab==='output'?'':'none';
+  $('log-error').style.display  = tab==='error' ?'':'none';
+}
+
+async function loadLogs(){
+  const [out, err] = await Promise.all([
+    api('GET','/api/logs/output'),
+    api('GET','/api/logs/error')
+  ]);
+  if(out){
+    const lines=out.lines||[];
+    $('log-output').innerHTML=lines.length===0
+      ?'<span class="ll-i">Output log is empty</span>'
+      :[...lines].reverse().map(l=>`<div class="${logCls(l)}">${esc(l)}</div>`).join('');
+    $('log-output').scrollTop=0;
+  }
+  if(err){
+    const bytes=err.bytes||0;
+    $('err-badge-cnt').textContent=bytes>0?(bytes>999?Math.round(bytes/1024)+'k':bytes):'';
+    $('log-error').innerHTML=!err.content||err.content.trim()===''
+      ?'<span class="ll-s">✅ Error log is clean — no failures recorded</span>'
+      :err.content.split('\n').map(l=>`<div class="ll-e">${esc(l)}</div>`).join('');
+    $('log-error').scrollTop=0;
+  }
+}
+
+async function rotateLogs(){
+  if(!confirm('Trim output.log to last 100 lines and clear error.log?')) return;
+  const r = await api('POST','/api/rotate-logs');
+  if(r&&r.ok){ toast('Logs rotated','success'); loadLogs(); }
+}
+
+// ── Health ────────────────────────────────────────────────────────────────────
+async function runHealth(){
+  $('health-grid').innerHTML='<div class="empty" style="grid-column:span 2">Running checks…</div>';
+  const r = await api('GET','/api/health');
+  if(!r){ $('health-grid').innerHTML='<div class="empty" style="grid-column:span 2">Health check failed — server offline?</div>'; return; }
+
+  const checks = [
+    {icon:'📄', label:'Backup Script', value: r.script?'✅ Executable':'❌ Not found/not executable', ok:r.script},
+    {icon:'☁️', label:'Google Drive', value: r.drive?'✅ Mounted and accessible':'❌ Not mounted', ok:r.drive},
+    {icon:'📅', label:'Cron Schedule', value: r.cron?'✅ Active entry found':'❌ No entry in crontab', ok:r.cron},
+    {icon:'🔇', label:'Cron Logging', value: r.cron_clean!==false?'✅ Logging enabled':'⚠️ stderr suppressed', ok:r.cron_clean!==false},
+    {icon:'💾', label:'SSD Free Space', value: `${r.ssd_free_gb} GB available`, ok:r.ssd_free_gb>5},
+    {icon:'🗄️', label:'Archive Count', value: r.archive_count+' archive(s) on Drive', ok:true},
+    {icon:'⏳', label:'Backup Running', value: r.running?`⚡ YES — PID ${r.pid}`:'No active backup process', ok:true},
+    {icon:'📋', label:'Error Log', value: r.error_bytes===0?'✅ Clean (0 bytes)':`⚠️ ${r.error_bytes} bytes`, ok:r.error_bytes===0},
+  ];
+
+  $('health-grid').innerHTML = checks.map(c=>`<div class="health-item">
+    <div class="health-icon">${c.icon}</div>
+    <div>
+      <div class="health-label" style="color:${c.ok?'var(--text)':'var(--amber)'}">${c.label}</div>
+      <div class="health-value">${esc(c.value)}</div>
+    </div>
+  </div>`).join('');
+
+  if(r.cron_entry){
+    $('health-grid').innerHTML += `<div class="health-item" style="grid-column:span 2">
+      <div class="health-icon">⏱️</div>
+      <div>
+        <div class="health-label">Cron Entry</div>
+        <div class="health-value"><code>${esc(r.cron_entry)}</code></div>
+      </div>
+    </div>`;
+  }
+}
+
+// ── Schedule ──────────────────────────────────────────────────────────────────
+async function loadSchedule(){
+  const r = await api('GET','/api/cron');
+  const entry = r&&r.entry?r.entry:'No backup entry';
+  $('cron-current').textContent = entry;
+  $('cron-status').textContent = entry&&entry!=='No backup entry'?'✅ Active':'⛔ Not set';
+  $('cron-status').className = 'pill '+(entry&&entry!=='No backup entry'?'p-g':'p-r');
+
+  // Auto-select matching preset
+  document.querySelectorAll('.preset-btn').forEach(b=>{
+    b.classList.remove('selected');
+    const expr=b.dataset.expr;
+    if(entry.startsWith(expr+' ')) b.classList.add('selected');
+  });
+}
+
+function selectPreset(el){
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedPreset = el.dataset.expr;
+  $('custom-cron-row').style.display = selectedPreset==='custom'?'block':'none';
+}
+
+async function applySchedule(){
+  let expr = selectedPreset;
+  if(!expr){ toast('Select a schedule preset first','error'); return; }
+  if(expr==='custom') expr=$('custom-cron-input').value.trim();
+  if(!expr){ toast('Enter a cron expression','error'); return; }
+  const fields=expr.trim().split(/\s+/);
+  if(fields.length!==5){ toast('Cron needs exactly 5 fields','error'); return; }
+  const r=await api('POST','/api/schedule',{expr});
+  if(r&&r.ok){ toast('Schedule updated!','success'); loadSchedule(); }
+}
+
+async function disableSchedule(){
+  if(!confirm('Remove the scheduled backup cron entry?')) return;
+  const r=await api('POST','/api/schedule',{expr:''});
+  if(r&&r.ok){ toast('Schedule disabled','success'); loadSchedule(); }
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+async function loadSettings(){
+  const r=await api('GET','/api/config');
+  if(!r) return;
+  const s=r.settings||{};
+  $('tog-direct').checked = s.DIRECT_TO_DRIVE==='true';
+  $('inp-keep').value = s.MAX_ARCHIVES_TO_KEEP||'3';
+
+  // Update config/logs path display
+  if(r.config_path) $('conf-path-display').textContent = r.config_path.replace(/\/Users\/[^/]+/,'~');
+  if(r.logs_path)   $('logs-path-display').textContent = r.logs_path.replace(/\/Users\/[^/]+/,'~');
+
+  // Sources
+  const srcs=r.sources||[];
+  $('settings-sources').innerHTML = srcs.length===0
+    ? '<div class="empty">No sources — add one below</div>'
+    : srcs.map(line=>{
+        const [path,name]=[line.split('|')[0],line.split('|')[1]||''];
+        return `<div class="row-item" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+          <div><div class="row-name">${esc(name)}</div><div class="row-path">${esc(path)}</div></div>
+          <button class="btn btn-muted" style="flex-shrink:0" onclick="removeSource('${esc(path)}')">✕</button>
+        </div>`;}).join('');
+
+  // Destinations
+  const dsts=r.destinations||[];
+  $('settings-dests').innerHTML = dsts.length===0
+    ? '<div class="empty">No destinations configured</div>'
+    : dsts.map(line=>{
+        const [path,name]=[line.split('|')[0],line.split('|')[1]||''];
+        return `<div class="row-item" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+          <div><div class="row-name">${esc(name)}</div><div class="row-path">${esc(path)}</div></div>
+          <button class="btn btn-muted" style="flex-shrink:0" onclick="removeDest('${esc(path)}')">✕</button>
+        </div>`;}).join('');
+}
+
+// ── Browse folder (opens macOS folder picker via server) ───────────────────────
+async function browseFolderFor(pathInputId, nameInputId){
+  const btn = event.currentTarget||event.target;
+  const orig = btn.textContent;
+  btn.textContent = '…'; btn.disabled = true;
+  try{
+    const r = await api('GET','/api/browse-folder');
+    if(r && r.path){
+      $(pathInputId).value = r.path;
+      if(nameInputId && !$(nameInputId).value)
+        $(nameInputId).value = r.name || r.path.split('/').pop();
+    }
+  } finally { btn.textContent = orig; btn.disabled = false; }
+}
+
+async function saveSetting(key, val){
+  const r=await api('POST','/api/config',{settings:{[key]:val}});
+  if(r&&r.ok){ toast(`${key} saved`,'success'); }
+}
+
+function showAddSource(){ $('add-source-form').style.display='block'; }
+function hideAddSource(){ $('add-source-form').style.display='none'; $('src-path-inp').value=''; $('src-name-inp').value=''; }
+async function addSource(){
+  const p=$('src-path-inp').value.trim(), n=$('src-name-inp').value.trim()||p.split('/').pop();
+  if(!p){ toast('Enter a folder path','error'); return; }
+  const r=await api('POST','/api/sources/add',{entry:`${p}|${n}`});
+  if(r&&r.ok){ toast('Source added','success'); hideAddSource(); loadSettings(); }
+}
+async function removeSource(path){
+  if(!confirm(`Remove source: ${path}?`)) return;
+  const r=await api('POST','/api/sources/remove',{path});
+  if(r&&r.ok){ toast('Source removed','success'); loadSettings(); }
+}
+
+function showAddDest(){ $('add-dest-form').style.display='block'; }
+function hideAddDest(){ $('add-dest-form').style.display='none'; $('dst-path-inp').value=''; $('dst-name-inp').value=''; }
+async function addDest(){
+  const p=$('dst-path-inp').value.trim(), n=$('dst-name-inp').value.trim()||p.split('/').pop();
+  if(!p){ toast('Enter a destination path','error'); return; }
+  const r=await api('POST','/api/destinations/add',{entry:`${p}|${n}`});
+  if(r&&r.ok){ toast('Destination added','success'); hideAddDest(); loadSettings(); }
+}
+async function removeDest(path){
+  if(!confirm(`Remove destination: ${path}?\n\nExisting archives are NOT deleted.`)) return;
+  const r=await api('POST','/api/destinations/remove',{path});
+  if(r&&r.ok){ toast('Destination removed','success'); loadSettings(); }
+  else if(r) toast(r.error||'Cannot remove last destination','error');
+}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  // Cmd+R → manual refresh (prevent browser reload)
+  if(e.metaKey && e.key === 'r'){ e.preventDefault(); manualRefresh(); return; }
+  // Cmd+B → go to backup page
+  if(e.metaKey && e.key === 'b'){ e.preventDefault(); go('backup'); return; }
+  // Cmd+D → go to dashboard
+  if(e.metaKey && e.key === 'd'){ e.preventDefault(); go('dashboard'); return; }
+  // Escape → close any open form
+  if(e.key === 'Escape'){
+    if($('add-source-form') && $('add-source-form').style.display!=='none') hideAddSource();
+    if($('add-dest-form')   && $('add-dest-form').style.display!=='none')   hideAddDest();
+  }
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+fetchStatus();
+pollTimer = setInterval(fetchStatus, 10000);
+</script>
+</body>
+</html>
+

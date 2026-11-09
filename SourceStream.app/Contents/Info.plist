@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>              <string>SourceStream</string>
+  <key>CFBundleDisplayName</key>       <string>SourceStream</string>
+  <key>CFBundleIdentifier</key>        <string>com.sourcestream.app</string>
+  <key>CFBundleVersion</key>           <string>1.0.0</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleExecutable</key>        <string>SourceStream</string>
+  <key>CFBundlePackageType</key>       <string>APPL</string>
+  <key>CFBundleSignature</key>         <string>????</string>
+  <key>CFBundleIconFile</key>          <string>icon</string>
+  <key>NSHighResolutionCapable</key>   <true/>
+
+  <!-- Run as background agent — no Dock icon -->
+  <key>LSUIElement</key>               <true/>
+
+  <!-- macOS 10.14+ privacy descriptions (needed for Full Disk Access prompt) -->
+  <key>NSDesktopFolderUsageDescription</key>
+    <string>SourceStream needs access to read your Developer folder for backup.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+    <string>SourceStream needs access to your files to create backups.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+    <string>SourceStream may access Downloads if configured as a backup source.</string>
+
+  <key>LSMinimumSystemVersion</key>    <string>12.0</string>
+  <key>NSSupportsAutomaticGraphicsSwitching</key> <true/>
+</dict>
+</plist>
+
