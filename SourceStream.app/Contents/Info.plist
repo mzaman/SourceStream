@@ -6,16 +6,23 @@
   <key>CFBundleName</key>              <string>SourceStream</string>
   <key>CFBundleDisplayName</key>       <string>SourceStream</string>
   <key>CFBundleIdentifier</key>        <string>com.sourcestream.app</string>
-  <key>CFBundleVersion</key>           <string>1.0.0</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key>           <string>1.0.3</string>
+  <key>CFBundleShortVersionString</key><string>1.0.3</string>
   <key>CFBundleExecutable</key>        <string>SourceStream</string>
   <key>CFBundlePackageType</key>       <string>APPL</string>
   <key>CFBundleSignature</key>         <string>????</string>
   <key>CFBundleIconFile</key>          <string>icon</string>
   <key>NSHighResolutionCapable</key>   <true/>
 
-  <!-- Run as background agent — no Dock icon -->
-  <key>LSUIElement</key>               <true/>
+  <!--
+    LSUIElement=true  → background agent (no Dock icon, no menu bar)
+    LSUIElement=false → regular app (Dock icon appears when open)
+    We REMOVE LSUIElement entirely so the app shows in the Dock when
+    the user launches it via the Desktop launcher / Finder.
+    The MacOS/SourceStream launcher quits itself immediately after
+    opening the browser, so the Dock icon only appears briefly during
+    launch (expected UX for a browser-based utility).
+  -->
 
   <!-- macOS 10.14+ privacy descriptions (needed for Full Disk Access prompt) -->
   <key>NSDesktopFolderUsageDescription</key>
@@ -27,6 +34,7 @@
 
   <key>LSMinimumSystemVersion</key>    <string>12.0</string>
   <key>NSSupportsAutomaticGraphicsSwitching</key> <true/>
+  <key>NSAppleEventsUsageDescription</key>
+    <string>SourceStream uses AppleScript to open the dashboard in your browser.</string>
 </dict>
 </plist>
-

@@ -210,6 +210,48 @@ tbody td:first-child{color:var(--text);font-family:monospace;font-size:.74rem}
 .text-sm{font-size:.75rem}
 code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
   padding:1px 6px;font-family:monospace;font-size:.72rem;color:var(--dim)}
+
+/* ── RING CHART ── */
+.rings-row{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:20px}
+.ring-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
+  padding:16px 20px;display:flex;align-items:center;gap:16px;flex:1;min-width:200px}
+.ring-svg{width:70px;height:70px;flex-shrink:0}
+.ring-track{fill:none;stroke:rgba(255,255,255,.07);stroke-width:10}
+.ring-fill{fill:none;stroke-width:10;stroke-linecap:round;
+  transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .6s ease}
+.ring-info .ring-title{font-size:.7rem;font-weight:700;color:var(--muted);
+  letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
+.ring-info .ring-val{font-size:1.3rem;font-weight:800;line-height:1}
+.ring-info .ring-sub{font-size:.68rem;color:var(--muted);margin-top:4px}
+
+/* ── HISTORY TIMELINE ── */
+.history-list{display:flex;flex-direction:column;gap:8px}
+.h-item{background:var(--card2);border:1px solid var(--border);border-radius:var(--rs);
+  padding:10px 14px;display:flex;align-items:center;gap:14px}
+.h-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.h-dot-ok{background:var(--green)}.h-dot-err{background:var(--red)}.h-dot-warn{background:var(--amber)}.h-dot-uk{background:var(--muted)}
+.h-meta{flex:1;min-width:0}
+.h-title{font-size:.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.h-sub{font-size:.68rem;color:var(--muted);margin-top:2px}
+
+/* ── NOTES ── */
+.notes-textarea{width:100%;background:var(--card2);border:1px solid var(--border);
+  border-radius:var(--rs);color:var(--text);padding:12px 14px;font-size:.82rem;
+  outline:none;resize:vertical;min-height:100px;font-family:inherit;line-height:1.6;
+  transition:border-color .15s}
+.notes-textarea:focus{border-color:var(--blue)}
+
+/* ── DRY RUN ── */
+.dry-result{background:var(--card2);border:1px solid var(--border2);border-radius:var(--rs);
+  padding:14px 16px;margin-top:14px}
+.dry-row{display:flex;justify-content:space-between;padding:4px 0;
+  border-bottom:1px solid var(--border);font-size:.8rem}
+.dry-row:last-child{border:none}
+
+/* ── COUNTDOWN ── */
+.countdown-badge{font-size:.72rem;font-weight:700;color:var(--cyan);
+  background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.2);
+  border-radius:999px;padding:3px 10px;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -251,6 +293,14 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
     <div class="nav-item" data-page="settings" onclick="go('settings')">
       <span class="nav-icon">⚙️</span>Settings
     </div>
+
+    <div class="nav-section">Tools</div>
+    <div class="nav-item" data-page="history" onclick="go('history')">
+      <span class="nav-icon">🕐</span>History
+    </div>
+    <div class="nav-item" data-page="notes" onclick="go('notes')">
+      <span class="nav-icon">📝</span>Notes
+    </div>
   </nav>
 
   <div class="sidebar-footer">
@@ -274,6 +324,13 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
     <span class="page-title" id="page-title">Dashboard</span>
     <div class="topbar-right">
       <span class="ts" id="last-updated">—</span>
+      <span id="next-backup-badge" class="countdown-badge" style="display:none">—</span>
+      <button class="btn btn-muted" id="auto-refresh-btn" onclick="toggleAutoRefresh()" title="Toggle auto-refresh">
+        ⏸ Auto
+      </button>
+      <button class="btn btn-muted" onclick="exportConfig()" title="Export config file">
+        📤 Export
+      </button>
       <button class="btn btn-primary" onclick="manualRefresh()">
         <div class="spinner" id="spinner" style="display:none"></div>
         🔄 Refresh
@@ -285,6 +342,43 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 
     <!-- ══════════════ DASHBOARD ══════════════ -->
     <div class="page active" id="pg-dashboard">
+      <!-- Disk rings row -->
+      <div class="rings-row" id="disk-rings">
+        <div class="ring-wrap">
+          <svg class="ring-svg" viewBox="0 0 70 70">
+            <circle class="ring-track" cx="35" cy="35" r="27"/>
+            <circle class="ring-fill" id="ring-ssd-fill" cx="35" cy="35" r="27" stroke="var(--blue)"
+              stroke-dasharray="169.6" stroke-dashoffset="169.6"/>
+          </svg>
+          <div class="ring-info">
+            <div class="ring-title">SSD Used</div>
+            <div class="ring-val" id="ring-ssd-val">—</div>
+            <div class="ring-sub" id="ring-ssd-sub">Loading…</div>
+          </div>
+        </div>
+        <div class="ring-wrap">
+          <svg class="ring-svg" viewBox="0 0 70 70">
+            <circle class="ring-track" cx="35" cy="35" r="27"/>
+            <circle class="ring-fill" id="ring-drive-fill" cx="35" cy="35" r="27" stroke="var(--purple)"
+              stroke-dasharray="169.6" stroke-dashoffset="169.6"/>
+          </svg>
+          <div class="ring-info">
+            <div class="ring-title">Drive Used</div>
+            <div class="ring-val" id="ring-drive-val">—</div>
+            <div class="ring-sub" id="ring-drive-sub">Loading…</div>
+          </div>
+        </div>
+        <div class="ring-wrap" style="flex:2">
+          <div style="flex:1">
+            <div class="ring-info" style="margin-bottom:8px">
+              <div class="ring-title">Next Scheduled Backup</div>
+              <div class="ring-val" id="next-run-val" style="font-size:1rem">—</div>
+              <div class="ring-sub" id="next-run-sub">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="section-label">System Overview</div>
       <div class="cards4" id="dash-cards">
         <div class="card"><div class="card-label">Engine Status</div><div class="card-val" id="d-engine" style="margin-top:4px">—</div><div class="card-sub" id="d-pid">—</div></div>
@@ -373,6 +467,18 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
         <div class="source-backup-btns" id="source-backup-btns">
           <span class="text-sm text-muted">Loading sources…</span>
         </div>
+      </div>
+
+      <!-- Dry-Run section -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">🧪 Dry Run — Preview</span>
+          <button class="btn btn-muted" id="dry-run-btn" onclick="runDryRun()">🔍 Simulate Backup</button>
+        </div>
+        <div class="text-sm text-muted" style="margin-bottom:10px">
+          Shows what WOULD be backed up — no files are written.
+        </div>
+        <div id="dry-run-result"><div class="empty text-muted">Click "Simulate Backup" to preview</div></div>
       </div>
 
       <div class="panel">
@@ -650,6 +756,44 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
       </div>
     </div>
 
+    <!-- ══════════════ HISTORY ══════════════ -->
+    <div class="page" id="pg-history">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">🕐 Backup Run History</span>
+          <button class="btn btn-muted" onclick="loadHistory()">↻ Refresh</button>
+        </div>
+        <div class="text-sm text-muted" style="margin-bottom:12px">
+          Parsed from <code>~/.sourcestream/logs/backup.log</code> — last 30 runs
+        </div>
+        <div class="history-list" id="history-list">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ NOTES ══════════════ -->
+    <div class="page" id="pg-notes">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">📝 Quick Notes</span>
+          <div class="flex">
+            <span class="text-sm text-muted">Auto-saved to ~/.sourcestream/notes.txt</span>
+            <button class="btn btn-success" onclick="saveNotes()">💾 Save</button>
+          </div>
+        </div>
+        <textarea class="notes-textarea" id="notes-area"
+          placeholder="Jot reminders here — what folders to add, upcoming cleanup tasks, etc."
+          onkeydown="if((e=event).metaKey&&e.key==='s'){e.preventDefault();saveNotes()}"></textarea>
+      </div>
+
+      <!-- Version info panel -->
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">ℹ️ System Info</span></div>
+        <div id="version-info"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+
   </div><!-- /pages -->
 </div><!-- /main -->
 
@@ -660,13 +804,15 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 const BASE = 'http://127.0.0.1:7474';
 const PAGE_TITLES = {
   dashboard:'Dashboard', backup:'Run Backup', archives:'Archives',
-  logs:'Logs', health:'Health Check', schedule:'Schedule', settings:'Settings'
+  logs:'Logs', health:'Health Check', schedule:'Schedule', settings:'Settings',
+  history:'Backup History', notes:'Notes & System Info'
 };
 let currentPage = 'dashboard';
 let status = null;
 let pollTimer = null;
 let selectedPreset = null;
 let activeLogTab = 'output';
+let autoRefreshEnabled = true;
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
 const $  = id => document.getElementById(id);
@@ -735,10 +881,13 @@ function go(page){
   if(page==='schedule') loadSchedule();
   if(page==='settings') loadSettings();
   if(page==='backup')   { loadBackupLog(); loadBackupSources(); }
+  if(page==='history')  loadHistory();
+  if(page==='notes')    loadNotes();
 }
 
 // ── Poll loop ─────────────────────────────────────────────────────────────────
 async function fetchStatus(){
+  if(!autoRefreshEnabled) return;  // paused
   $('spinner').style.display='inline-block';
   try {
     const r = await fetch(BASE+'/status.json?_='+Date.now(), {cache:'no-store'});
@@ -844,6 +993,9 @@ function renderDashboard(d){
 
   $('d-err-badge').textContent = eb>0?`⚠️ ${eb} bytes in error log`:'✅ No errors';
   $('d-err-badge').className = 'pill '+(eb>0?'p-a':'p-g');
+
+  // Next backup countdown from cron
+  updateCronCountdown(d.cron_schedule||'');
 }
 
 // ── Running banner ────────────────────────────────────────────────────────────
@@ -1320,9 +1472,191 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ── Auto-refresh toggle ───────────────────────────────────────────────────────
+function toggleAutoRefresh(){
+  autoRefreshEnabled = !autoRefreshEnabled;
+  const btn=$('auto-refresh-btn');
+  btn.textContent = autoRefreshEnabled ? '⏸ Auto' : '▶ Auto';
+  btn.className   = autoRefreshEnabled ? 'btn btn-muted' : 'btn btn-success';
+  if(autoRefreshEnabled) fetchStatus();
+  toast(autoRefreshEnabled ? 'Auto-refresh resumed' : 'Auto-refresh paused', 'info');
+}
+
+// ── Export config ──────────────────────────────────────────────────────────────
+async function exportConfig(){
+  const r = await api('GET','/api/config');
+  if(!r){ toast('Could not load config','error'); return; }
+  const lines = [
+    '# SourceStream Configuration (exported)',
+    '# ~/.sourcestream/config/sourcestream.conf','',
+    '[settings]', ...Object.entries(r.settings).map(([k,v])=>`${k}=${v}`),
+    '','[sources]', ...(r.sources||[]),
+    '','[destinations]', ...(r.destinations||[]),
+  ];
+  if(r.excludes&&r.excludes.length) lines.push('','[excludes]',...r.excludes);
+  const blob = new Blob([lines.join('\n')],{type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sourcestream.conf';
+  a.click();
+  toast('Config exported','success');
+}
+
+// ── Disk rings ─────────────────────────────────────────────────────────────────
+const RING_CIRC = 2 * Math.PI * 27; // 169.6
+function setRing(fillId, pct, color){
+  const el = $(fillId);
+  if(!el) return;
+  const off = RING_CIRC * (1 - Math.min(100,pct) / 100);
+  el.style.strokeDashoffset = off.toFixed(1);
+  el.style.stroke = pct<60?'var(--green)':pct<85?'var(--amber)':'var(--red)';
+  if(color) el.style.stroke = color;
+}
+
+async function loadDiskUsage(){
+  const r = await api('GET','/api/disk-usage');
+  if(!r) return;
+  if(r.ssd && r.ssd.total_gb){
+    const s = r.ssd;
+    setRing('ring-ssd-fill', s.pct_used);
+    $('ring-ssd-val').textContent = s.used_gb+'GB';
+    $('ring-ssd-sub').textContent = `${s.free_gb}GB free of ${s.total_gb}GB (${s.pct_used}% used)`;
+  }
+  if(r.drives && r.drives.length){
+    const d = r.drives[0];
+    if(d.total_gb){
+      setRing('ring-drive-fill', d.pct_used, 'var(--purple)');
+      $('ring-drive-val').textContent = d.used_gb+'GB';
+      $('ring-drive-sub').textContent = `${d.free_gb}GB free · ${d.archive_gb}GB archives`;
+    } else {
+      $('ring-drive-val').textContent = d.online ? '?' : 'Offline';
+      $('ring-drive-sub').textContent = d.label;
+    }
+  }
+}
+
+// ── Cron next-run countdown ────────────────────────────────────────────────────
+function parseCronNext(expr){
+  // expr format: "MIN HR DOM MON DOW"  e.g. "0 23 * * 0"
+  if(!expr || expr==='not set' || expr==='' || !expr.trim()) return null;
+  const parts = expr.trim().split(/\s+/);
+  if(parts.length < 5) return null;
+  const [min, hr, , , dow] = parts;
+  if(isNaN(min)||isNaN(hr)) return null;
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(parseInt(hr,10), parseInt(min,10), 0, 0);
+  if(dow !== '*'){
+    // next occurrence of given weekday
+    const targetDow = parseInt(dow,10);
+    let diff = (targetDow - now.getDay() + 7) % 7;
+    if(diff===0 && target<=now) diff=7;
+    target.setDate(now.getDate() + diff);
+  } else {
+    if(target<=now) target.setDate(target.getDate()+1);
+  }
+  return target;
+}
+
+function updateCronCountdown(cron){
+  const badge=$('next-backup-badge');
+  const valEl=$('next-run-val'), subEl=$('next-run-sub');
+  const t = parseCronNext(cron);
+  if(!t){ 
+    if(badge) badge.style.display='none';
+    if(valEl) valEl.textContent='Not scheduled';
+    if(subEl) subEl.textContent='Set a schedule in the Schedule page';
+    return;
+  }
+  const now=new Date();
+  const diff=Math.max(0,t-now);
+  const h=Math.floor(diff/3600000);
+  const m=Math.floor((diff%3600000)/60000);
+  const label = h>0 ? `in ${h}h ${m}m` : `in ${m}m`;
+  if(badge){ badge.style.display='inline-flex'; badge.textContent='Next: '+label; }
+  if(valEl) valEl.textContent = label;
+  if(subEl) subEl.textContent = t.toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+
+// ── Backup history ─────────────────────────────────────────────────────────────
+async function loadHistory(){
+  $('history-list').innerHTML='<div class="empty">Loading…</div>';
+  const r = await api('GET','/api/backup-history');
+  if(!r||!r.length){
+    $('history-list').innerHTML='<div class="empty">No backup runs recorded yet. Run a backup first.</div>';
+    return;
+  }
+  $('history-list').innerHTML = r.map(run=>{
+    const dotCls = run.status==='success'?'h-dot-ok':run.status==='error'?'h-dot-err':run.status==='warn'?'h-dot-warn':'h-dot-uk';
+    const statusLabel = run.status==='success'?'✅ Success':run.status==='error'?'❌ Error':run.status==='warn'?'⚠️ Warnings':'⏳ Unknown';
+    const dur = run.duration_min>0 ? ` · ${run.duration_min}m` : '';
+    const srcs = run.sources.length>0 ? run.sources.join(', ') : 'Unknown sources';
+    return `<div class="h-item">
+      <div class="h-dot ${dotCls}"></div>
+      <div class="h-meta">
+        <div class="h-title">${esc(statusLabel)} — ${esc(srcs)}</div>
+        <div class="h-sub">${esc(run.start||'?')} ${dur} ${run.errors>0?'· '+run.errors+' error(s)':''}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Notes ──────────────────────────────────────────────────────────────────────
+async function loadNotes(){
+  const [nr, vr] = await Promise.all([
+    api('GET','/api/notes'),
+    api('GET','/api/version'),
+  ]);
+  if(nr) $('notes-area').value = nr.content||'';
+  if(vr){
+    $('version-info').innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.78rem">
+        ${[
+          ['Version',   vr.version],
+          ['macOS',     vr.macos],
+          ['Python',    vr.python_ver+' ('+vr.python+')'],
+          ['Hostname',  vr.hostname],
+          ['Config',    vr.conf],
+          ['Logs',      vr.logs],
+        ].map(([k,v])=>`<div style="color:var(--muted);font-weight:600">${esc(k)}</div>
+          <div style="color:var(--dim);word-break:break-all">${esc(v||'—')}</div>`).join('')}
+      </div>`;
+  }
+}
+async function saveNotes(){
+  const r = await api('POST','/api/notes',{content:$('notes-area').value});
+  if(r&&r.ok) toast('Notes saved','success');
+  else toast('Failed to save notes','error');
+}
+
+// ── Dry run ────────────────────────────────────────────────────────────────────
+async function runDryRun(){
+  const btn=$('dry-run-btn');
+  btn.textContent='Simulating…'; btn.disabled=true;
+  $('dry-run-result').innerHTML='<div class="empty">Scanning…</div>';
+  const r = await api('POST','/api/dry-run',{});
+  btn.textContent='🔍 Simulate Backup'; btn.disabled=false;
+  if(!r||!r.results){
+    $('dry-run-result').innerHTML='<div class="empty">Dry run failed</div>'; return;
+  }
+  $('dry-run-result').innerHTML = r.results.map(res=>
+    res.error
+    ? `<div class="dry-row"><span>${esc(res.label)}</span><span class="pill p-r">❌ ${esc(res.error)}</span></div>`
+    : `<div class="dry-row">
+        <span>📁 <strong>${esc(res.label)}</strong><br><code>${esc(res.path)}</code></span>
+        <span style="text-align:right">
+          <div>${esc(res.files?.toLocaleString()||'?')} files</div>
+          <div class="text-muted">${esc(res.raw_size||'?')} raw</div>
+        </span>
+       </div>`
+  ).join('') || '<div class="empty">No sources configured</div>';
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 fetchStatus();
+loadDiskUsage();
 pollTimer = setInterval(fetchStatus, 10000);
+setInterval(loadDiskUsage, 30000);  // refresh disk every 30s
 </script>
 </body>
 </html>

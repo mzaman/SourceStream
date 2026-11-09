@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SourceStream Dashboard Server
+SourceStream Dashboard Server  v1.0.3
 SourceStream.app/Contents/Resources/server.py
 
 Binds to 127.0.0.1:7474.
@@ -8,18 +8,20 @@ User data lives at ~/.sourcestream/ (never inside the app bundle).
 Run via LaunchAgent (auto-starts at login) or via the app launcher.
 """
 
-import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil
+import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil, platform, sys
 from pathlib import Path
 
-PORT      = 7474
-APP_RES   = Path(__file__).parent          # …/SourceStream.app/Contents/Resources/
-SS_DIR    = Path.home() / ".sourcestream"
-CONF      = SS_DIR / "config" / "sourcestream.conf"
-LOGS_DIR  = SS_DIR / "logs"
-OUT_LOG   = LOGS_DIR / "backup.log"
-ERR_LOG   = LOGS_DIR / "error.log"
-STATUS    = SS_DIR / "status.json"
-SCRIPT    = APP_RES / "backup_engine.sh"
+APP_VERSION = "1.0.3"
+PORT        = 7474
+APP_RES     = Path(__file__).parent          # …/SourceStream.app/Contents/Resources/
+SS_DIR      = Path.home() / ".sourcestream"
+CONF        = SS_DIR / "config" / "sourcestream.conf"
+LOGS_DIR    = SS_DIR / "logs"
+OUT_LOG     = LOGS_DIR / "backup.log"
+ERR_LOG     = LOGS_DIR / "error.log"
+STATUS      = SS_DIR / "status.json"
+NOTES_FILE  = SS_DIR / "notes.txt"
+SCRIPT      = APP_RES / "backup_engine.sh"
 
 MIME = {".html": "text/html", ".js": "application/javascript",
         ".css": "text/css", ".json": "application/json", ".ico": "image/x-icon"}
@@ -51,6 +53,7 @@ DEFAULT_SETTINGS = {
     "COMPRESSION_LEVEL":   "6",
     "ARCHIVE_PREFIX":      "{label}",
     "HOSTNAME_IN_NAME":    "false",
+    "BACKUP_VERIFY":       "false",
 }
 
 def parse_conf():
@@ -374,6 +377,102 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 return self.jsend({"entry": ""})
 
+        if p == "/api/version":
+            return self.jsend({
+                "version":     APP_VERSION,
+                "python":      sys.executable,
+                "python_ver":  platform.python_version(),
+                "script":      str(SCRIPT),
+                "conf":        str(CONF),
+                "logs":        str(LOGS_DIR),
+                "macos":       platform.mac_ver()[0],
+                "hostname":    platform.node().split(".")[0],
+            })
+
+        if p == "/api/notes":
+            try:    return self.jsend({"content": NOTES_FILE.read_text()})
+            except: return self.jsend({"content": ""})
+
+        if p == "/api/disk-usage":
+            res = {}
+            try:
+                st    = os.statvfs("/")
+                total = st.f_blocks * st.f_frsize
+                free  = st.f_bavail * st.f_frsize
+                used  = total - free
+                res["ssd"] = {
+                    "total_gb": round(total / 1e9, 1),
+                    "used_gb":  round(used  / 1e9, 1),
+                    "free_gb":  round(free  / 1e9, 1),
+                    "pct_used": round(used / total * 100, 1) if total else 0,
+                }
+            except Exception:
+                res["ssd"] = {}
+            _, _src, dsts, _exc = parse_conf()
+            dest_list = [(d.split("|")[0], d.split("|")[1] if "|" in d else "Drive") for d in dsts] \
+                        if dsts else [(str(GDRIVE), "Google Drive")]
+            drives = []
+            for dest_path, dest_label in dest_list:
+                dest = Path(dest_path)
+                try:
+                    st    = os.statvfs(str(dest.anchor))
+                    total = st.f_blocks * st.f_frsize
+                    free  = st.f_bavail * st.f_frsize
+                    used  = total - free
+                    arc_sz = sum(f.stat().st_size for f in dest.glob("*.tar.gz") if f.exists()) \
+                             if dest.is_dir() else 0
+                    drives.append({
+                        "label":      dest_label,
+                        "path":       dest_path,
+                        "online":     dest.parent.is_dir() or dest.is_dir(),
+                        "total_gb":   round(total / 1e9, 1),
+                        "used_gb":    round(used  / 1e9, 1),
+                        "free_gb":    round(free  / 1e9, 1),
+                        "pct_used":   round(used / total * 100, 1) if total else 0,
+                        "archive_gb": round(arc_sz / 1e9, 2),
+                    })
+                except Exception:
+                    drives.append({"label": dest_label, "path": dest_path, "online": False})
+            res["drives"] = drives
+            return self.jsend(res)
+
+        if p == "/api/backup-history":
+            history = []
+            try:
+                lines = OUT_LOG.read_text().splitlines()
+                run = None
+                for line in lines:
+                    if "SourceStream Backup Engine starting" in line:
+                        if run:
+                            history.append(run)
+                        ts = line[1:20] if line.startswith("[") else ""
+                        run = {"start": ts, "end": "", "status": "unknown",
+                               "sources": [], "duration_min": 0, "errors": 0}
+                    elif run:
+                        if "ERROR" in line:
+                            run["errors"] += 1
+                            run["status"] = "error"
+                        elif "SUCCESS" in line and "concluded" in line:
+                            run["status"] = "success" if run["errors"] == 0 else "warn"
+                            run["end"] = line[1:20] if line.startswith("[") else ""
+                        elif "Source:" in line and "→" in line:
+                            src = line.split("Source:")[-1].strip().split("→")[0].strip()
+                            if src and src not in run["sources"]:
+                                run["sources"].append(src)
+                if run:
+                    history.append(run)
+            except Exception:
+                pass
+            fmt = "%Y-%m-%d %H:%M:%S"
+            for r in history:
+                try:
+                    t0 = datetime.datetime.strptime(r["start"], fmt)
+                    t1 = datetime.datetime.strptime(r["end"],   fmt)
+                    r["duration_min"] = max(0, round((t1 - t0).total_seconds() / 60, 1))
+                except Exception:
+                    pass
+            return self.jsend(list(reversed(history[-30:])))
+
         # Static fallback
         fp = APP_RES / p.lstrip("/")
         if fp.exists() and fp.is_file(): return self.fsend(fp)
@@ -512,6 +611,48 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     shell=True,
                 )
             return self.jsend({"ok": True})
+
+        if p == "/api/notes":
+            note = body.get("content", "")
+            try:
+                NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
+                NOTES_FILE.write_text(note)
+                return self.jsend({"ok": True})
+            except Exception as e:
+                return self.jsend({"ok": False, "error": str(e)})
+
+        if p == "/api/dry-run":
+            """Simulate a backup — count files that WOULD be archived without writing."""
+            s, src_entries, dsts, exc = parse_conf()
+            source_path = body.get("source_path", "")
+            results = []
+            for entry in src_entries:
+                src_path = entry.split("|")[0]
+                src_label = entry.split("|")[1] if "|" in entry else src_path
+                if source_path and src_path != source_path:
+                    continue
+                try:
+                    r = sh(
+                        f"find {repr(src_path)} -not -path '*/node_modules/*'"
+                        " -not -path '*/vendor/*' -not -path '*/.gradle/*'"
+                        " -not -path '*/build/intermediates/*' -not -path '*/.git/objects/pack/*'"
+                        " -not -name '.DS_Store' -not -name '*.tar.gz'"
+                        " -type f 2>/dev/null | wc -l",
+                        shell=True
+                    )
+                    file_count = int(r.stdout.strip())
+                    r2 = sh(["du", "-sh", src_path])
+                    raw_size = r2.stdout.split()[0] if r2.returncode == 0 else "?"
+                    results.append({
+                        "label": src_label,
+                        "path": src_path,
+                        "files": file_count,
+                        "raw_size": raw_size,
+                        "would_archive": True,
+                    })
+                except Exception as e:
+                    results.append({"label": src_label, "path": src_path, "error": str(e)})
+            return self.jsend({"ok": True, "results": results})
 
         self.send_response(404); self.end_headers()
 
