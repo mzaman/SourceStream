@@ -209,20 +209,38 @@ log_msg "INFO" "🧹 /tmp cleanup scan complete."
 # --no-xattrs      → skips macOS extended attributes (avoid "Operation not supported")
 # --exclude="*.ipc" → skips Git fsmonitor socket files specifically
 TAR_EXCLUDES=(
-    --exclude=".DS_Store"      --exclude=".localized"
-    --exclude="node_modules"   --exclude="bower_components"
-    --exclude="vendor"         --exclude="storage/debugbar"
-    --exclude="storage/clockwork"
+    # General dev/build artefacts
+    --exclude=".DS_Store"           --exclude=".localized"
+    --exclude="node_modules"        --exclude="bower_components"
+    --exclude="vendor"
+    # Laravel / framework cache
+    --exclude="storage/debugbar"    --exclude="storage/clockwork"
     --exclude="storage/framework/views"
     --exclude="storage/framework/cache/data"
     --exclude="storage/framework/sessions"
     --exclude="storage/framework/testing"
     --exclude="storage/logs"
+    # Android / Gradle
     --exclude="build/intermediates" --exclude="build/outputs"
-    --exclude=".gradle/caches"      --exclude="Library/Caches"
-    --exclude="Library/Logs"        --exclude="*.zip"
-    --exclude="*.tar.gz"            --exclude="*.tar"
+    --exclude=".gradle/caches"
+    # macOS system dirs (require Full Disk Access — skip them)
+    --exclude="Library/Caches"       --exclude="Library/Logs"
+    --exclude="Library/Application Support/MobileSync"
+    --exclude="Library/Application Support/CallHistoryDB"
+    --exclude="Library/Messages"
+    --exclude="Library/Mail"
+    # Archive files already on Drive
+    --exclude="*.zip"      --exclude="*.tar.gz"  --exclude="*.tar"
+    # Git pack files and sockets
     --exclude=".git/objects/pack"   --exclude="*.ipc"
+    # Xcode / Apple developer caches
+    --exclude="DerivedData"
+    --exclude="*.xcarchive/dSYMs"
+    --exclude="Pods"
+    # Python / virtualenv
+    --exclude="__pycache__"  --exclude="*.pyc"  --exclude=".venv"  --exclude="venv"
+    # Photos Library — requires Full Disk Access; skip gracefully
+    --exclude="*.photoslibrary"
 )
 
 # Append any user-defined custom excludes from config [excludes] section
@@ -235,6 +253,12 @@ CLEVEL="${COMPRESSION_LEVEL:-6}"
 [[ "$CLEVEL" =~ ^[1-9]$ ]] || CLEVEL=6
 export GZIP="-${CLEVEL}"
 
+# COPYFILE_DISABLE=1  — tells macOS to skip the AppleDouble ._* sidecar files
+# that carry extended attributes. Without this, bsdtar may still attempt to
+# pack xattrs on HFS+/APFS volumes and hit "Operation not permitted" for
+# system-protected files even when --no-xattrs is passed.
+export COPYFILE_DISABLE=1
+
 # ==============================================================================
 # FUNCTION: preflight_space_check
 # ==============================================================================
@@ -243,9 +267,10 @@ preflight_space_check() {
     log_msg "INFO" "   🔍 Pre-flight space check..."
 
     local RAW_KB
-    RAW_KB=$(du -sk "$SRC" 2>/dev/null | awk '{print $1}')
-    if [ -z "$RAW_KB" ] || [ "$RAW_KB" -eq 0 ]; then
-        log_msg "WARN" "   ⚠️  Could not measure source size. Skipping space check."
+    RAW_KB=$(du -sk "$SRC" 2>/dev/null | awk '{print $1}' | tr -cd '0-9')
+    RAW_KB=$(( ${RAW_KB:-0} + 0 ))   # coerce to integer
+    if [ "$RAW_KB" -eq 0 ]; then
+        log_msg "WARN" "   ⚠️  Could not measure source size (permissions?). Skipping space check."
         return 0
     fi
 
@@ -255,7 +280,8 @@ preflight_space_check() {
     local REQUIRED_KB=$(( EST_KB + EST_KB / 10 ))
 
     local FREE_KB
-    FREE_KB=$(df -k "$DEST_DIR" 2>/dev/null | awk 'NR==2 {print $4}')
+    FREE_KB=$(df -k "$DEST_DIR" 2>/dev/null | awk 'NR==2 {print $4}' | tr -cd '0-9')
+    FREE_KB=$(( ${FREE_KB:-0} + 0 ))  # coerce to integer
     local FREE_MB=$(( FREE_KB / 1024 ))
 
     log_msg "INFO" "   Raw source:          ~${RAW_MB} MB"
@@ -289,7 +315,10 @@ apply_retention_policy() {
     ALL_ARCHIVES=$(ls -1t "$DEST/"*.tar.gz 2>/dev/null \
         | grep "/${SAFE_PREFIX}_" \
         | sort -t_ -k2,3)
-    COUNT=$(echo "$ALL_ARCHIVES" | grep -c '.tar.gz' 2>/dev/null || echo 0)
+    # grep -c on empty string returns 0 on some shells but "0\n0" on others;
+    # strip non-digits and default to 0 to guard against "integer expected" errors
+    COUNT=$(echo "$ALL_ARCHIVES" | grep -c '.tar.gz' 2>/dev/null | tr -cd '0-9' | head -c 10)
+    COUNT=$(( ${COUNT:-0} + 0 ))   # coerce to integer; also handles empty
 
     if [ "$COUNT" -le "$MAX_ARCHIVES_TO_KEEP" ]; then
         log_msg "INFO" "   📁 Retention: $COUNT archive(s) — within limit of $MAX_ARCHIVES_TO_KEEP."
@@ -366,29 +395,58 @@ process_backup() {
     log_msg "INFO" "⏳ Compressing → $STAGE_PATH"
     log_msg "INFO" "   (This may take several minutes for large source trees...)"
 
+    # Pipe stderr through a filter:
+    #   - "Operation not permitted" → demote to WARN (Photos Library, Mail, etc.)
+    #   - "Could not pack extended attributes" → suppress (cosmetic, not an error)
+    #   - everything else → pass through to ERROR_LOG
+    local TAR_STDERR_TMP
+    TAR_STDERR_TMP=$(mktemp /tmp/ss_tar_err.XXXXXX)
+
     (
         cd "$(dirname "$REAL_SRC")" || exit 1
-        tar \
+        COPYFILE_DISABLE=1 tar \
             "${TAR_EXCLUDES[@]}" \
             --format=gnutar \
             --no-xattrs \
             -czf "$STAGE_PATH" \
             -h \
             "$(basename "$REAL_SRC")" \
-            2>>"$ERROR_LOG"
+            2>"$TAR_STDERR_TMP"
     )
     local TAR_EXIT=$?
 
-    # Exit 0 = clean. Exit 1 = files changed during archiving (normal, not an error).
-    # Exit 2+ = real failure (I/O error, out of space, permission denied).
+    # Classify stderr lines
+    if [ -s "$TAR_STDERR_TMP" ]; then
+        local PERM_WARNS REAL_ERRORS
+        PERM_WARNS=$(grep -c "Operation not permitted\|Could not pack extended attributes\|Couldn't visit directory" "$TAR_STDERR_TMP" 2>/dev/null || true)
+        REAL_ERRORS=$(grep -v "Operation not permitted\|Could not pack extended attributes\|Couldn't visit directory\|Error exit delayed" "$TAR_STDERR_TMP" | grep -c '.' 2>/dev/null || true)
+        # Coerce to integer
+        PERM_WARNS=$(( ${PERM_WARNS:-0} + 0 ))
+        REAL_ERRORS=$(( ${REAL_ERRORS:-0} + 0 ))
+        if [ "$PERM_WARNS" -gt 0 ]; then
+            log_msg "WARN" "   ⚠️  $PERM_WARNS path(s) skipped: 'Operation not permitted' (requires Full Disk Access for Photos/Mail/Messages). Continuing."
+        fi
+        if [ "$REAL_ERRORS" -gt 0 ]; then
+            cat "$TAR_STDERR_TMP" >> "$ERROR_LOG"
+        fi
+    fi
+    rm -f "$TAR_STDERR_TMP"
+
+    # Exit 0 = clean. Exit 1 = files changed or permission skips (normal for live sources).
+    # Exit 2+ = real failure (I/O error, out of space) — only fail if archive is empty.
     if [ "$TAR_EXIT" -eq 0 ]; then
         log_msg "INFO" "   ✅ tar completed cleanly (exit 0)."
     elif [ "$TAR_EXIT" -eq 1 ]; then
-        log_msg "WARN" "   ⚠️  tar exit 1: files changed during archiving (normal for live repos). Continuing..."
+        log_msg "WARN" "   ⚠️  tar exit 1: some files skipped (changed during run or permission-denied). Continuing..."
     else
-        log_err "tar failed (exit $TAR_EXIT) — see $ERROR_LOG for details"
-        rm -f "$STAGE_PATH" 2>/dev/null
-        return 1
+        # Exit 2+: only abort if the archive is missing or empty
+        if [ -f "$STAGE_PATH" ] && [ -s "$STAGE_PATH" ]; then
+            log_msg "WARN" "   ⚠️  tar exit $TAR_EXIT but archive produced — treating as partial success."
+        else
+            log_err "tar failed (exit $TAR_EXIT) — see $ERROR_LOG for details"
+            rm -f "$STAGE_PATH" 2>/dev/null
+            return 1
+        fi
     fi
 
     # Verify archive was produced
@@ -495,7 +553,8 @@ write_status_json() {
     fi
 
     local ERR_BYTES=0
-    [ -f "$ERROR_LOG" ] && ERR_BYTES=$(wc -c < "$ERROR_LOG" 2>/dev/null | tr -d ' ' || echo 0)
+    [ -f "$ERROR_LOG" ] && ERR_BYTES=$(wc -c < "$ERROR_LOG" 2>/dev/null | tr -cd '0-9' || true)
+    ERR_BYTES=$(( ${ERR_BYTES:-0} + 0 ))
 
     local CUR_PID="null"
     local RUNNING_PID
