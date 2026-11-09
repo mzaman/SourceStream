@@ -47,6 +47,8 @@ HOSTNAME_IN_NAME="false"
 SOURCE_ENTRIES=()
 DEST_ENTRIES=()
 CUSTOM_EXCLUDES=()
+BACKUP_VERIFY="false"      # auto-verify archive integrity after each backup
+SS_DRY_RUN="${SS_DRY_RUN:-}"  # set by server for dry-run mode (env override)
 
 # ── Auto-detect Google Drive path (any user, any Google account) ───────────────
 detect_gdrive() {
@@ -121,6 +123,7 @@ load_config() {
                         COMPRESSION_LEVEL)    COMPRESSION_LEVEL="$val" ;;
                         ARCHIVE_PREFIX)       ARCHIVE_PREFIX="$val" ;;
                         HOSTNAME_IN_NAME)     HOSTNAME_IN_NAME="$val" ;;
+                        BACKUP_VERIFY)        BACKUP_VERIFY="$val" ;;
                     esac
                 fi
                 ;;
@@ -174,6 +177,27 @@ make_archive_name() {
     # Always append timestamp suffix so archives never overwrite each other
     echo "${NAME}_${DATE_PART}_${TIME_PART}.tar.gz"
 }
+
+# ── Exit trap — remove partial archives if engine crashes mid-backup ─────────────
+_PARTIAL_FILES=()
+trap 'for pf in "${_PARTIAL_FILES[@]}"; do [ -f "$pf" ] && rm -f "$pf" && log_msg "WARN" "🧹 Cleaned up partial archive: $(basename "$pf")"; done' EXIT
+
+# ── Dry-run mode ──────────────────────────────────────────────────────────────
+if [ -n "$SS_DRY_RUN" ]; then
+    log_msg "INFO" "🔍 DRY-RUN MODE — no archives will be written."
+    for SRC_ENTRY in "${SOURCE_ENTRIES[@]}"; do
+        SRC_PATH="${SRC_ENTRY%%|*}"
+        SRC_NAME="${SRC_ENTRY##*|}"
+        log_msg "INFO" "   📂 Would backup: $SRC_NAME ($SRC_PATH)"
+        FC=$(find "$SRC_PATH" -type f 2>/dev/null | wc -l | tr -d ' ')
+        SZ=$(du -sh "$SRC_PATH" 2>/dev/null | cut -f1 || echo "?")
+        log_msg "INFO" "      Files: ~$FC  |  Raw size: $SZ"
+        ARCNAME=$(make_archive_name "$SRC_NAME")
+        log_msg "INFO" "      Would create: $ARCNAME"
+    done
+    log_msg "INFO" "🔍 DRY-RUN complete. No files written."
+    exit 0
+fi
 
 # ── Flush leftover /tmp fragments from aborted sessions ───────────────────────
 rm -f /tmp/*.tar.gz 2>/dev/null
@@ -332,6 +356,9 @@ process_backup() {
         log_msg "INFO" "   Mode: STAGE via /tmp → $DEST_COUNT destinations"
     fi
 
+    # Register with trap so partial archive is cleaned on crash
+    _PARTIAL_FILES+=("$STAGE_PATH")
+
     # Set progress-tracking global BEFORE tar starts (server polls this)
     CURRENT_ARCHIVE_PATH="$STAGE_PATH"
 
@@ -374,6 +401,18 @@ process_backup() {
     local ARCHIVE_SIZE
     ARCHIVE_SIZE=$(du -sh "$STAGE_PATH" | cut -f1)
     log_msg "INFO" "   📦 Archive size: $ARCHIVE_SIZE"
+
+    # Auto-verify archive if BACKUP_VERIFY=true
+    if [ "${BACKUP_VERIFY:-false}" = "true" ]; then
+        log_msg "INFO" "   🔍 Auto-verifying archive integrity..."
+        if tar -tzf "$STAGE_PATH" >/dev/null 2>>"$ERROR_LOG"; then
+            log_msg "INFO" "   ✅ Archive verified OK."
+        else
+            log_err "Archive verify FAILED for $STAGE_PATH — may be corrupt!"
+            rm -f "$STAGE_PATH" 2>/dev/null
+            return 1
+        fi
+    fi
 
     # ── Distribute to all destinations ────────────────────────────────────────
     local OVERALL_SUCCESS=true

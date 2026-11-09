@@ -1,62 +1,162 @@
 #!/bin/bash
 # ============================================================
 # SourceStream  —  MacOS/SourceStream  (app bundle entry point)
-# This thin launcher is what macOS executes when you open the
-# .app.  It:
-#   1. Locates the bundled Python server inside Resources/
-#   2. Starts or checks the LaunchAgent (auto-start at login)
-#   3. Opens the dashboard in Chrome app-mode
+# macOS executes this when the user opens SourceStream.app.
+#
+# Responsibilities:
+#   1. Discover Python 3 (Homebrew → system → pyenv → asdf)
+#   2. Install / update the LaunchAgent on first run or update
+#   3. Ensure the dashboard server is running
+#   4. Open the dashboard in Chrome app-mode (or best browser)
 # ============================================================
 
 BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RESOURCES="$BUNDLE_DIR/Resources"
 LOGS_DIR="$HOME/.sourcestream/logs"
+CONF_DIR="$HOME/.sourcestream/config"
 SERVER_PY="$RESOURCES/server.py"
-PYTHON="/opt/homebrew/bin/python3"
 PORT=7474
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
-# Fallback Python if homebrew not present
-[ ! -f "$PYTHON" ] && PYTHON="/usr/bin/python3"
+mkdir -p "$LOGS_DIR" "$CONF_DIR"
 
-mkdir -p "$LOGS_DIR"
+# ── 1. Discover Python 3 ──────────────────────────────────────────────────────
+PYTHON=""
+for candidate in \
+    /opt/homebrew/bin/python3 \
+    /usr/local/bin/python3 \
+    /usr/bin/python3 \
+    "$HOME/.pyenv/shims/python3" \
+    "$HOME/.asdf/shims/python3" \
+    "$(command -v python3 2>/dev/null)"; do
+    if [ -x "$candidate" ]; then
+        PYTHON="$candidate"
+        break
+    fi
+done
 
-# ── Install LaunchAgent on first run ──────────────────────────────────────────
-PLIST_SRC="$BUNDLE_DIR/Library/LaunchAgents/com.sourcestream.server.plist"
-PLIST_DEST="$HOME/Library/LaunchAgents/com.sourcestream.server.plist"
-if [ ! -f "$PLIST_DEST" ]; then
-    # Stamp in the actual Python and server paths
-    sed \
-        -e "s|__PYTHON__|$PYTHON|g" \
-        -e "s|__SERVER_PY__|$SERVER_PY|g" \
-        -e "s|__RES_DIR__|$RESOURCES|g" \
-        -e "s|__LOGS_DIR__|$LOGS_DIR|g" \
-        "$PLIST_SRC" > "$PLIST_DEST"
-    launchctl load "$PLIST_DEST" 2>/dev/null
+if [ -z "$PYTHON" ]; then
+    osascript -e 'display dialog "SourceStream requires Python 3.\n\nInstall it with Homebrew:\n  brew install python3\n\nOr download from: python.org" with title "SourceStream — Python Not Found" buttons {"OK"} default button "OK" with icon stop'
+    exit 1
 fi
 
-# ── Ensure server is running ──────────────────────────────────────────────────
-if ! curl -s --max-time 1 "http://127.0.0.1:$PORT/api/health" > /dev/null 2>&1; then
-    # Try to start via launchctl first
-    launchctl start com.sourcestream.server 2>/dev/null
-    sleep 2
-    # If still not up, start directly
-    if ! curl -s --max-time 1 "http://127.0.0.1:$PORT/api/health" > /dev/null 2>&1; then
-        "$PYTHON" "$SERVER_PY" >> "$LOGS_DIR/server.log" 2>&1 &
-        sleep 2
+# ── 2. Config migration — merge new keys into existing config ─────────────────
+# This runs on every launch (cheap — just adds missing keys to the conf)
+"$PYTHON" - << PYEOF 2>>"$LOGS_DIR/server.log"
+import os, re
+from pathlib import Path
+
+conf = Path.home() / ".sourcestream/config/sourcestream.conf"
+if not conf.exists():
+    exit(0)
+
+text = conf.read_text()
+
+# Settings keys that must exist with their defaults
+required = {
+    "DIRECT_TO_DRIVE":     "true",
+    "MAX_ARCHIVES_TO_KEEP":"3",
+    "COMPRESSION_LEVEL":   "6",
+    "ARCHIVE_PREFIX":      "{label}",
+    "HOSTNAME_IN_NAME":    "false",
+    "BACKUP_VERIFY":       "false",
+}
+
+# Find the [settings] section
+in_settings = False
+existing_keys = set()
+lines = text.splitlines()
+settings_end = None
+
+for i, line in enumerate(lines):
+    stripped = line.strip()
+    if stripped == "[settings]":
+        in_settings = True
+        continue
+    if in_settings and stripped.startswith("[") and stripped.endswith("]"):
+        settings_end = i
+        break
+    if in_settings and "=" in stripped and not stripped.startswith("#"):
+        existing_keys.add(stripped.split("=")[0].strip())
+
+if settings_end is None:
+    settings_end = len(lines)
+
+# Inject any missing keys just before [sources] (or end of settings block)
+to_inject = [(k, v) for k, v in required.items() if k not in existing_keys]
+if to_inject:
+    inject_lines = [f"{k}={v}" for k, v in to_inject]
+    lines = lines[:settings_end] + inject_lines + lines[settings_end:]
+    # Ensure [excludes] section exists at the end if missing
+    full = "\n".join(lines)
+    if "[excludes]" not in full:
+        full = full.rstrip() + "\n\n[excludes]\n"
+    conf.write_text(full)
+    print(f"[SourceStream launcher] Config migrated: added {[k for k,v in to_inject]}")
+PYEOF
+
+# ── 3. Install / refresh LaunchAgent ─────────────────────────────────────────
+PLIST_SRC="$BUNDLE_DIR/Library/LaunchAgents/com.sourcestream.server.plist"
+PLIST_DEST="$HOME/Library/LaunchAgents/com.sourcestream.server.plist"
+BUNDLE_VERSION=$(defaults read "$BUNDLE_DIR/Info" CFBundleVersion 2>/dev/null || echo "unknown")
+
+# Always re-stamp the plist so it points to the current app location.
+# This handles:  move-to-/Applications,  dev-path testing,  updates.
+mkdir -p "$HOME/Library/LaunchAgents"
+sed \
+    -e "s|__PYTHON__|$PYTHON|g" \
+    -e "s|__SERVER_PY__|$SERVER_PY|g" \
+    -e "s|__RES_DIR__|$RESOURCES|g" \
+    -e "s|__LOGS_DIR__|$LOGS_DIR|g" \
+    "$PLIST_SRC" > "$PLIST_DEST"
+
+# Reload if the plist changed or the service isn't running
+if ! launchctl list 2>/dev/null | grep -q "com.sourcestream.server"; then
+    launchctl unload "$PLIST_DEST" 2>/dev/null || true
+    launchctl load   "$PLIST_DEST" 2>/dev/null || true
+fi
+
+# ── 4. Ensure server is responding ───────────────────────────────────────────
+_wait_server() {
+    local max=10 i=0
+    while [ $i -lt $max ]; do
+        curl -s --max-time 1 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 && return 0
+        sleep 1; i=$((i+1))
+    done
+    return 1
+}
+
+if ! curl -s --max-time 1 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+    # Try launchctl start first
+    launchctl start com.sourcestream.server 2>/dev/null || true
+    if ! _wait_server; then
+        # Direct start as fallback
+        "$PYTHON" "$SERVER_PY" >>"$LOGS_DIR/server.log" 2>&1 &
+        _wait_server || true
     fi
 fi
 
-# ── Open dashboard in Chrome app-mode ─────────────────────────────────────────
-if [ -f "$CHROME" ]; then
-    "$CHROME" \
-        --app="http://127.0.0.1:$PORT/" \
-        --window-size=1300,840 \
+# ── 5. Open dashboard ─────────────────────────────────────────────────────────
+URL="http://127.0.0.1:${PORT}/"
+
+# Try Chrome in app-mode first (best UX — no address bar, looks native)
+CHROME_BIN=""
+for c in \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"; do
+    [ -f "$c" ] && CHROME_BIN="$c" && break
+done
+
+if [ -n "$CHROME_BIN" ]; then
+    "$CHROME_BIN" \
+        --app="$URL" \
+        --window-size=1340,860 \
+        --window-position=60,40 \
         --no-first-run \
         --disable-extensions \
         2>/dev/null &
 else
-    # Fallback: default browser
-    open "http://127.0.0.1:$PORT/"
+    # Safari / default browser fallback
+    open "$URL"
 fi
-
