@@ -8,7 +8,7 @@ User data lives at ~/.sourcestream/ (never inside the app bundle).
 Run via LaunchAgent (auto-starts at login) or via the app launcher.
 """
 
-import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse
+import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil
 from pathlib import Path
 
 PORT      = 7474
@@ -20,34 +20,42 @@ OUT_LOG   = LOGS_DIR / "backup.log"
 ERR_LOG   = LOGS_DIR / "error.log"
 STATUS    = SS_DIR / "status.json"
 SCRIPT    = APP_RES / "backup_engine.sh"
+
+MIME = {".html": "text/html", ".js": "application/javascript",
+        ".css": "text/css", ".json": "application/json", ".ico": "image/x-icon"}
+
+
+# ── Google Drive auto-detection ────────────────────────────────────────────────
 def _find_gdrive() -> Path:
     """Auto-detect the Google Drive 'My Drive' folder for any user account."""
     cs = Path.home() / "Library/CloudStorage"
     if cs.is_dir():
-        # Glob all GoogleDrive-* entries (handles any email address)
         for d in sorted(cs.glob("GoogleDrive-*")):
-            candidate = d / "My Drive" / "Developer Backups"
             if (d / "My Drive").is_dir():
-                return candidate
-    # Legacy / older Drive versions
+                return d / "My Drive" / "Developer Backups"
     for legacy in [
         Path.home() / "Google Drive" / "My Drive" / "Developer Backups",
         Path.home() / "Google Drive" / "Developer Backups",
     ]:
         if legacy.parent.is_dir():
             return legacy
-    # Fallback — read from config (will be populated after first setup)
     return Path.home() / "Library/CloudStorage/GoogleDrive/My Drive/Developer Backups"
 
 GDRIVE = _find_gdrive()
 
-MIME = {".html": "text/html", ".js": "application/javascript",
-        ".css": "text/css", ".json": "application/json", ".ico": "image/x-icon"}
 
 # ── Config ─────────────────────────────────────────────────────────────────────
+DEFAULT_SETTINGS = {
+    "DIRECT_TO_DRIVE":     "true",
+    "MAX_ARCHIVES_TO_KEEP": "3",
+    "COMPRESSION_LEVEL":   "6",
+    "ARCHIVE_PREFIX":      "{label}",
+    "HOSTNAME_IN_NAME":    "false",
+}
+
 def parse_conf():
-    settings = {"DIRECT_TO_DRIVE": "true", "MAX_ARCHIVES_TO_KEEP": "3"}
-    sources, dests = [], []
+    settings = dict(DEFAULT_SETTINGS)
+    sources, dests, excludes = [], [], []
     section = ""
     try:
         for line in CONF.read_text().splitlines():
@@ -64,12 +72,14 @@ def parse_conf():
                 sources.append(line)
             elif section == "destinations" and "|" in line:
                 dests.append(line)
+            elif section == "excludes" and line:
+                excludes.append(line)
     except Exception:
         pass
-    return settings, sources, dests
+    return settings, sources, dests, excludes
 
 
-def write_conf(settings, sources, dests):
+def write_conf(settings, sources, dests, excludes=None):
     CONF.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# SourceStream Configuration",
@@ -77,8 +87,11 @@ def write_conf(settings, sources, dests):
         "", "[settings]",
         *[f"{k}={v}" for k, v in settings.items()],
         "", "[sources]", *sources,
-        "", "[destinations]", *dests, "",
+        "", "[destinations]", *dests,
     ]
+    if excludes:
+        lines += ["", "[excludes]", *excludes]
+    lines.append("")
     CONF.write_text("\n".join(lines))
 
 
@@ -91,6 +104,34 @@ def read_status():
         return json.loads(STATUS.read_text())
     except Exception:
         return {}
+
+
+# ── Common folder suggestions ──────────────────────────────────────────────────
+COMMON_FOLDERS = [
+    ("~/Developer",   "Developer"),
+    ("~/Projects",    "Projects"),
+    ("~/Code",        "Code"),
+    ("~/Sites",       "Sites"),
+    ("~/Work",        "Work"),
+    ("~/repos",       "Repos"),
+    ("~/src",         "Source"),
+    ("~/Documents",   "Documents"),
+    ("~/Desktop",     "Desktop"),
+    ("~/Downloads",   "Downloads"),
+    ("~/Pictures",    "Pictures"),
+    ("~/Music",       "Music"),
+    ("~/Movies",      "Movies"),
+]
+
+def suggest_folders():
+    """Return common folders that actually exist on this machine."""
+    suggestions = []
+    for rel, label in COMMON_FOLDERS:
+        path = Path(rel.replace("~", str(Path.home())))
+        if path.is_dir():
+            # Estimate size (fast: just check it exists, don't du)
+            suggestions.append({"path": str(path), "label": label})
+    return suggestions
 
 
 # ── Handler ────────────────────────────────────────────────────────────────────
@@ -138,12 +179,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p == "/api/health":
             c = {}
             c["script"]     = os.access(str(SCRIPT), os.X_OK)
-            # Read first destination from config (or fall back to auto-detected Drive)
-            _, _src, _dst = parse_conf()
+            _, _src, _dst, _exc = parse_conf()
             drive_path = Path(_dst[0].split("|")[0]) if _dst else GDRIVE
             c["drive"]      = drive_path.is_dir()
             try:
-                # crontab -l exits 1 with stderr noise on empty crontab — suppress stderr
                 result = subprocess.run(["crontab", "-l"], stdout=subprocess.PIPE,
                                         stderr=subprocess.DEVNULL, text=True)
                 cl = result.stdout
@@ -173,57 +212,59 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.jsend(c)
 
         if p == "/api/config":
-            s, src, dst = parse_conf()
+            s, src, dst, exc = parse_conf()
             return self.jsend({
                 "settings": s, "sources": src, "destinations": dst,
-                "config_path": str(CONF), "logs_path": str(LOGS_DIR),
+                "excludes": exc,
+                "config_path": str(CONF),
+                "logs_path": str(LOGS_DIR),
                 "app_version": "1.0.0",
             })
 
+        if p == "/api/progress":
+            d = read_status()
+            running = d.get("engine_status") == "running"
+            cur_mb  = 0
+            if running and d.get("current_archive_path"):
+                try: cur_mb = int(Path(d["current_archive_path"]).stat().st_size / 1024 / 1024)
+                except: pass
+            est_mb  = int(d.get("estimated_size_mb", 0))
+            pct     = min(99, int(cur_mb / est_mb * 100)) if est_mb > 0 and cur_mb > 0 else (50 if running else 0)
+            elapsed = 0
+            if running and d.get("last_run_start"):
+                try:
+                    t0 = datetime.datetime.strptime(d["last_run_start"], "%Y-%m-%d %H:%M:%S")
+                    elapsed = int((datetime.datetime.now() - t0).total_seconds())
+                except: pass
+            return self.jsend({
+                "running":      running,
+                "pct":          pct,
+                "current_mb":   cur_mb,
+                "estimated_mb": est_mb,
+                "elapsed_sec":  elapsed,
+                "last_status":  d.get("last_run_status", ""),
+            })
+
         if p == "/api/logs/output":
-            try:    lines = OUT_LOG.read_text().splitlines()[-150:]
-            except: lines = []
-            return self.jsend({"lines": lines})
+            try:
+                lines = OUT_LOG.read_text().splitlines()[-150:]
+                return self.jsend({"lines": lines, "bytes": OUT_LOG.stat().st_size})
+            except:
+                return self.jsend({"lines": [], "bytes": 0})
 
         if p == "/api/logs/error":
-            try:    txt = ERR_LOG.read_text(); return self.jsend({"content": txt, "bytes": len(txt.encode())})
-            except: return self.jsend({"content": "", "bytes": 0})
-
-        if p == "/api/progress":
-            s       = read_status()
-            running = s.get("engine_status") == "running"
-            result  = {
-                "running":      running,
-                "pct":          0,
-                "current_mb":   0,
-                "estimated_mb": s.get("estimated_size_mb", 0),
-                "elapsed_sec":  0,
-                "last_status":  s.get("last_run_status", ""),
-            }
-            if running:
-                start = s.get("last_run_start", "")
-                if start:
-                    try:
-                        d = datetime.datetime.fromisoformat(start.replace(" ", "T"))
-                        result["elapsed_sec"] = int((datetime.datetime.now() - d).total_seconds())
-                    except Exception:
-                        pass
-                ap = s.get("current_archive_path", "")
-                em = s.get("estimated_size_mb", 0)
-                if ap and os.path.exists(ap) and em > 0:
-                    cur = int(os.path.getsize(ap) / 1024 / 1024)
-                    result["current_mb"] = cur
-                    result["pct"]        = min(99, int(cur / em * 100))
-                elif result["elapsed_sec"] > 0 and em > 0:
-                    est_sec       = max(60, em / 200 * 60)
-                    result["pct"] = min(95, int(result["elapsed_sec"] / est_sec * 100))
-            return self.jsend(result)
+            try:
+                content = ERR_LOG.read_text()
+                return self.jsend({"content": content, "bytes": ERR_LOG.stat().st_size})
+            except:
+                return self.jsend({"content": "", "bytes": 0})
 
         if p == "/api/browse-folder":
             try:
                 r = subprocess.run(
                     ["osascript", "-e",
-                     'POSIX path of (choose folder with prompt "Select a folder:")'],
+                     'tell application "Finder" to set f to choose folder\n'
+                     'return POSIX path of f'],
                     capture_output=True, text=True, timeout=60,
                 )
                 path_val = r.stdout.strip().rstrip("/")
@@ -233,11 +274,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 return self.jsend({"path": "", "name": ""})
 
+        if p == "/api/suggest-folders":
+            return self.jsend(suggest_folders())
+
         if p == "/api/analyze":
             res = {}
-            s, src, dst_entries = parse_conf()
+            s, src, dst_entries, _exc = parse_conf()
             sources = [e.split("|")[0] for e in src] or [str(Path.home() / "Developer")]
-            # Use first configured destination for drive stats (any user, any path)
             drive_path_analyze = Path(dst_entries[0].split("|")[0]) if dst_entries else GDRIVE
             try:
                 total_kb = 0
@@ -256,7 +299,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 res["drive_free_mb"] = 0; res["drive_total_mb"] = 0
             try:
                 ec = sh(
-                    "find " + " ".join(sources) +
+                    "find " + " ".join(f'"{s}"' for s in sources) +
                     r" -type d \( -name node_modules -o -name vendor -o -name .gradle \) 2>/dev/null | wc -l",
                     shell=True,
                 ).stdout.strip()
@@ -266,7 +309,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 top = sh(
                     "du -sm " + " ".join(f'"{s}"/*' for s in sources) +
-                    " 2>/dev/null | sort -rn | head -8",
+                    " 2>/dev/null | sort -rn | head -10",
                     shell=True,
                 ).stdout
                 res["top_folders"] = [
@@ -279,9 +322,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/archives":
             archs = []
-            # Read destinations from config — works for any user's setup
-            _, _src, dsts = parse_conf()
-            # Fall back to auto-detected drive if config has no destinations yet
+            _, _src, dsts, _exc = parse_conf()
             dest_list = [(d.split("|")[0], d.split("|")[1] if "|" in d else "Drive") for d in dsts] \
                         if dsts else [(str(GDRIVE), "Google Drive")]
             try:
@@ -295,13 +336,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         created = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
                         archs.append({
                             "name":        f.name,
+                            "path":        str(f),
                             "size_mb":     int(st.st_size / 1024 / 1024),
                             "destination": dest_label,
+                            "dest_path":   dest_path,
                             "created":     created,
                         })
             except Exception:
                 pass
             return self.jsend(archs)
+
+        if p == "/api/archive-verify":
+            # Verifies a single archive is readable (tar -tzf)
+            # Expects ?path= query parameter
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            arch_path = qs.get("path", [""])[0]
+            if not arch_path or not Path(arch_path).exists():
+                return self.jsend({"ok": False, "error": "File not found"})
+            try:
+                r = sh(["tar", "-tzf", arch_path])
+                count = len(r.stdout.splitlines())
+                ok = r.returncode == 0 and count > 0
+                return self.jsend({"ok": ok, "entries": count,
+                                   "error": r.stderr.strip() if not ok else ""})
+            except Exception as e:
+                return self.jsend({"ok": False, "error": str(e)})
 
         if p == "/api/cron":
             try:
@@ -327,13 +386,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(n)) if n else {}
 
         if p == "/api/run-backup":
-            notify = body.get("notify", False)
+            notify      = body.get("notify", False)
+            source_path = body.get("source_path", "")   # optional: single-source backup
             LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+            env = os.environ.copy()
+            if source_path:
+                # Pass a single-source override to the engine via env var
+                env["SS_SINGLE_SOURCE"] = source_path
+
             if notify:
                 wrapper = SS_DIR / "run_notify_wrapper.sh"
                 wrapper.write_text(
                     "#!/bin/bash\n"
-                    f"{SCRIPT} >> {OUT_LOG} 2>> {ERR_LOG}\n"
+                    + (f"export SS_SINGLE_SOURCE={repr(source_path)}\n" if source_path else "")
+                    + f"{SCRIPT} >> {OUT_LOG} 2>> {ERR_LOG}\n"
                     "STATUS=$?\n"
                     'if [ $STATUS -eq 0 ]; then\n'
                     '  MSG="✅ Backup finished. Archive on Google Drive."\n'
@@ -352,6 +419,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     [str(SCRIPT)],
                     stdout=open(str(OUT_LOG), "a"),
                     stderr=open(str(ERR_LOG), "a"),
+                    env=env,
                 )
             return self.jsend({"ok": True})
 
@@ -366,7 +434,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.jsend({"ok": True})
 
         if p == "/api/clear-tmp":
-            files = glob.glob("/tmp/*_Backup_*.tar.gz")
+            files = glob.glob("/tmp/*.tar.gz")
             for f in files: os.remove(f)
             return self.jsend({"ok": True, "removed": len(files)})
 
@@ -381,39 +449,54 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.jsend({"ok": False, "error": str(e)})
 
         if p == "/api/config":
-            s, src, dst = parse_conf()
-            s.update(body.get("settings", {}))
-            write_conf(s, src, dst)
+            s, src, dst, exc = parse_conf()
+            new_s = body.get("settings", {})
+            s.update(new_s)
+            write_conf(s, src, dst, exc)
             return self.jsend({"ok": True})
 
         if p == "/api/sources/add":
-            s, src, dst = parse_conf()
+            s, src, dst, exc = parse_conf()
             e = body.get("entry", "").strip()
             if e and "|" in e and e not in src:
-                src.append(e); write_conf(s, src, dst)
+                src.append(e); write_conf(s, src, dst, exc)
             return self.jsend({"ok": True})
 
         if p == "/api/sources/remove":
-            s, src, dst = parse_conf()
+            s, src, dst, exc = parse_conf()
             pv  = body.get("path", "")
             src = [x for x in src if not x.startswith(pv + "|")]
-            write_conf(s, src, dst)
+            write_conf(s, src, dst, exc)
             return self.jsend({"ok": True})
 
         if p == "/api/destinations/add":
-            s, src, dst = parse_conf()
+            s, src, dst, exc = parse_conf()
             e = body.get("entry", "").strip()
             if e and "|" in e and e not in dst:
-                dst.append(e); write_conf(s, src, dst)
+                dst.append(e); write_conf(s, src, dst, exc)
             return self.jsend({"ok": True})
 
         if p == "/api/destinations/remove":
-            s, src, dst = parse_conf()
+            s, src, dst, exc = parse_conf()
             if len(dst) <= 1:
                 return self.jsend({"ok": False, "error": "Cannot remove last destination"})
             pv  = body.get("path", "")
             dst = [x for x in dst if not x.startswith(pv + "|")]
-            write_conf(s, src, dst)
+            write_conf(s, src, dst, exc)
+            return self.jsend({"ok": True})
+
+        if p == "/api/excludes/add":
+            s, src, dst, exc = parse_conf()
+            pattern = body.get("pattern", "").strip()
+            if pattern and pattern not in exc:
+                exc.append(pattern); write_conf(s, src, dst, exc)
+            return self.jsend({"ok": True})
+
+        if p == "/api/excludes/remove":
+            s, src, dst, exc = parse_conf()
+            pattern = body.get("pattern", "").strip()
+            exc = [x for x in exc if x != pattern]
+            write_conf(s, src, dst, exc)
             return self.jsend({"ok": True})
 
         if p == "/api/schedule":
@@ -442,4 +525,3 @@ if __name__ == "__main__":
     print(f"   Logs   : {LOGS_DIR}")
     with socketserver.TCPServer(("127.0.0.1", PORT), Handler) as httpd:
         httpd.serve_forever()
-

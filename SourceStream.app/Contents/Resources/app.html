@@ -125,7 +125,8 @@ tbody td:first-child{color:var(--text);font-family:monospace;font-size:.74rem}
 .ll-i{color:#64748b}.ll-s{color:var(--green)}.ll-e{color:var(--red)}.ll-w{color:var(--amber)}
 
 /* ── BACKUP PAGE ── */
-.backup-actions{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+.backup-actions{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.source-backup-btns{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;padding:12px 16px;background:var(--card2);border:1px solid var(--border);border-radius:var(--rs)}
 .backup-btn-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
   padding:28px 24px;text-align:center;cursor:pointer;transition:all .2s}
 .backup-btn-card:hover{border-color:var(--blue);background:rgba(59,130,246,.06)}
@@ -157,6 +158,10 @@ tbody td:first-child{color:var(--text);font-family:monospace;font-size:.74rem}
 
 /* ── SETTINGS ── */
 .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.comp-row{display:flex;align-items:center;gap:10px}
+.comp-row input[type=range]{flex:1;accent-color:var(--blue)}
+.comp-val{width:22px;text-align:center;font-weight:800;color:var(--blue)}
+.suggest-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}
 .form-group{margin-bottom:16px}
 .form-label{font-size:.72rem;font-weight:700;color:var(--dim);letter-spacing:.05em;
   text-transform:uppercase;margin-bottom:7px;display:block}
@@ -359,6 +364,17 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
         </div>
       </div>
 
+      <!-- Per-source quick backup -->
+      <div class="panel" id="per-source-panel" style="display:none">
+        <div class="panel-head">
+          <span class="panel-title">🎯 Backup Individual Source</span>
+          <span class="text-sm text-muted">Runs engine for one folder only</span>
+        </div>
+        <div class="source-backup-btns" id="source-backup-btns">
+          <span class="text-sm text-muted">Loading sources…</span>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-head">
           <span class="panel-title">🔎 Storage Analysis</span>
@@ -385,14 +401,17 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
         <div class="panel-head">
           <span class="panel-title">🗄️ Backup Archives</span>
           <div class="flex">
+            <input class="form-input" id="arch-search" placeholder="Filter archives…"
+                   oninput="filterArchives(this.value)"
+                   style="width:180px;padding:5px 10px;font-size:.75rem">
             <span id="arch-cnt" class="pill p-b">0 files</span>
             <button class="btn btn-muted" onclick="loadArchives()">↻ Refresh</button>
           </div>
         </div>
         <div class="tbl-wrap">
           <table>
-            <thead><tr><th>Archive Name</th><th>Size</th><th>Destination</th><th>Created</th><th>Age</th></tr></thead>
-            <tbody id="arch-tbody"><tr><td colspan="5" class="no-data">Loading…</td></tr></tbody>
+            <thead><tr><th>Archive Name</th><th>Size</th><th>Destination</th><th>Created</th><th>Age</th><th>Integrity</th></tr></thead>
+            <tbody id="arch-tbody"><tr><td colspan="6" class="no-data">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -514,9 +533,59 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
               </div>
             </div>
 
-            <div style="font-size:.72rem;color:var(--muted);margin-top:8px;padding:10px;background:var(--card2);border-radius:var(--rs)">
+            <div class="form-group">
+              <label class="form-label">Compression Level (1=Fast · 9=Best)</label>
+              <div class="comp-row">
+                <input type="range" id="inp-compression" min="1" max="9" step="1" value="6"
+                       oninput="document.getElementById('comp-val').textContent=this.value">
+                <span id="comp-val" class="comp-val">6</span>
+                <button class="btn btn-primary" onclick="saveSetting('COMPRESSION_LEVEL', document.getElementById('inp-compression').value)">Save</button>
+              </div>
+              <div class="text-sm text-muted" style="margin-top:4px">Level 1 = fastest (less compression). Level 9 = smallest file (much slower).</div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Archive Name Template</label>
+              <div class="flex" style="gap:8px">
+                <input class="form-input" id="inp-prefix" placeholder="{label}" style="flex:1">
+                <button class="btn btn-primary" onclick="saveSetting('ARCHIVE_PREFIX', document.getElementById('inp-prefix').value)">Save</button>
+              </div>
+              <div class="text-sm text-muted" style="margin-top:4px">Tokens: <code>{label}</code> <code>{hostname}</code> — always appends <code>_{date}_{time}.tar.gz</code></div>
+            </div>
+
+            <div class="toggle-row mb">
+              <div>
+                <div class="toggle-label">Include Hostname in Archive Name</div>
+                <div class="toggle-desc">e.g. Developer_MacPro_20261109_230001.tar.gz</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="tog-hostname" onchange="saveSetting('HOSTNAME_IN_NAME', this.checked?'true':'false')">
+                <div class="toggle-track"></div>
+              </label>
+            </div>
+
+            <div style="font-size:.72rem;color:var(--muted);margin-top:12px;padding:10px;background:var(--card2);border-radius:var(--rs)">
               <div>Config: <code id="conf-path-display">~/.sourcestream/config/sourcestream.conf</code></div>
               <div style="margin-top:4px">Logs: <code id="logs-path-display">~/.sourcestream/logs/</code></div>
+            </div>
+          </div>
+
+          <!-- Custom Excludes -->
+          <div class="panel">
+            <div class="panel-head">
+              <span class="panel-title">🚫 Custom Excludes</span>
+              <button class="btn btn-muted" onclick="showAddExclude()">+ Add</button>
+            </div>
+            <div class="text-sm text-muted" style="margin-bottom:10px">
+              Patterns appended to built-in excludes (node_modules, vendor, .gradle…)
+            </div>
+            <div id="excludes-list"><div class="empty">No custom excludes</div></div>
+            <div id="add-exclude-form" style="display:none" class="mt">
+              <div class="flex" style="gap:8px">
+                <input class="form-input" id="exc-pattern-inp" placeholder="*.log  or  dist/cache" style="flex:1">
+                <button class="btn btn-success" onclick="addExclude()">Add</button>
+                <button class="btn btn-muted" onclick="hideAddExclude()">Cancel</button>
+              </div>
             </div>
           </div>
         </div>
@@ -543,6 +612,11 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
                 <button class="btn btn-success" onclick="addSource()">Add Source</button>
                 <button class="btn btn-muted" onclick="hideAddSource()">Cancel</button>
               </div>
+            </div>
+            <!-- Suggested Folders -->
+            <div id="suggestions-wrap" style="display:none">
+              <div class="section-label mt" style="margin-top:14px">💡 Quick Add — Common Folders</div>
+              <div class="suggest-grid" id="suggestions-grid"></div>
             </div>
           </div>
 
@@ -660,7 +734,7 @@ function go(page){
   if(page==='health')   runHealth();
   if(page==='schedule') loadSchedule();
   if(page==='settings') loadSettings();
-  if(page==='backup')   loadBackupLog();
+  if(page==='backup')   { loadBackupLog(); loadBackupSources(); }
 }
 
 // ── Poll loop ─────────────────────────────────────────────────────────────────
@@ -783,16 +857,18 @@ function updateRunningBanner(d){
 // ── Backup actions ────────────────────────────────────────────────────────────
 let backupPollTimer = null;
 
-async function runBackup(notify){
+async function runBackup(notify, sourcePath=''){
   // Disable cards while running
   document.querySelectorAll('.backup-btn-card').forEach(c=>c.classList.add('disabled'));
   $('progress-section').style.display = 'block';
   $('progress-log').innerHTML = '<span class="ll-i">Launching backup engine…</span>';
   $('prog-bar').style.width = '0%';
   $('prog-pct').textContent = '0%';
-  $('prog-label').textContent = 'Compressing…';
+  $('prog-label').textContent = sourcePath ? `Backing up ${sourcePath.split('/').pop()}…` : 'Compressing…';
 
-  const r = await api('POST', '/api/run-backup', {notify});
+  const body = {notify};
+  if(sourcePath) body.source_path = sourcePath;
+  const r = await api('POST', '/api/run-backup', body);
   if(r && r.ok){
     toast('Backup launched!', 'success');
     if(backupPollTimer) clearInterval(backupPollTimer);
@@ -920,21 +996,42 @@ async function runAnalyze(){
 }
 
 // ── Archives ──────────────────────────────────────────────────────────────────
+let _allArchives = [];
+
 async function loadArchives(){
-  $('arch-tbody').innerHTML='<tr><td colspan="5" class="no-data">Loading…</td></tr>';
+  $('arch-tbody').innerHTML='<tr><td colspan="6" class="no-data">Loading…</td></tr>';
   const r = await api('GET', '/api/archives');
-  if(!r||!r.length){
-    $('arch-tbody').innerHTML='<tr><td colspan="5" class="no-data">No archives found</td></tr>';
-    $('arch-cnt').textContent='0 files'; return;
+  _allArchives = r||[];
+  renderArchives(_allArchives);
+}
+
+function filterArchives(query){
+  const q = query.toLowerCase();
+  renderArchives(q ? _allArchives.filter(a=>a.name.toLowerCase().includes(q)||a.destination.toLowerCase().includes(q)) : _allArchives);
+}
+
+function renderArchives(list){
+  $('arch-cnt').textContent=list.length+' file'+(list.length!==1?'s':'');
+  if(!list.length){
+    $('arch-tbody').innerHTML='<tr><td colspan="6" class="no-data">No archives found</td></tr>'; return;
   }
-  $('arch-cnt').textContent=r.length+' file'+(r.length!==1?'s':'');
-  $('arch-tbody').innerHTML=r.map(a=>`<tr>
+  $('arch-tbody').innerHTML=list.map(a=>`<tr>
     <td>${esc(a.name)}</td>
     <td>${fmtMB(a.size_mb)}</td>
     <td>${pill(a.destination,'p-p')}</td>
     <td style="color:var(--dim)">${esc(a.created||'—')}</td>
     <td style="color:var(--muted)">${ago(a.created)}</td>
+    <td><button class="btn btn-muted" style="font-size:.68rem;padding:3px 8px"
+      onclick="verifyArchive('${esc(a.path)}',this)">🔍 Verify</button></td>
   </tr>`).join('');
+}
+
+async function verifyArchive(path, btn){
+  btn.textContent='…'; btn.disabled=true;
+  const r = await api('GET', `/api/archive-verify?path=${encodeURIComponent(path)}`);
+  if(r && r.ok) toast(`✅ Archive OK — ${r.entries} entries`, 'success');
+  else toast(`❌ Corrupt: ${r&&r.error||'unknown'}`, 'error');
+  btn.textContent='🔍 Verify'; btn.disabled=false;
 }
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
@@ -1058,6 +1155,13 @@ async function loadSettings(){
   $('tog-direct').checked = s.DIRECT_TO_DRIVE==='true';
   $('inp-keep').value = s.MAX_ARCHIVES_TO_KEEP||'3';
 
+  // New settings
+  const cl = parseInt(s.COMPRESSION_LEVEL||'6',10);
+  $('inp-compression').value = cl;
+  $('comp-val').textContent = cl;
+  $('inp-prefix').value = s.ARCHIVE_PREFIX||'{label}';
+  $('tog-hostname').checked = s.HOSTNAME_IN_NAME==='true';
+
   // Update config/logs path display
   if(r.config_path) $('conf-path-display').textContent = r.config_path.replace(/\/Users\/[^/]+/,'~');
   if(r.logs_path)   $('logs-path-display').textContent = r.logs_path.replace(/\/Users\/[^/]+/,'~');
@@ -1083,6 +1187,15 @@ async function loadSettings(){
           <div><div class="row-name">${esc(name)}</div><div class="row-path">${esc(path)}</div></div>
           <button class="btn btn-muted" style="flex-shrink:0" onclick="removeDest('${esc(path)}')">✕</button>
         </div>`;}).join('');
+
+  // Excludes
+  renderExcludes(r.excludes||[]);
+
+  // Suggestions
+  loadSuggestions();
+
+  // Per-source backup buttons (Backup page)
+  loadSourceButtons(srcs);
 }
 
 // ── Browse folder (opens macOS folder picker via server) ───────────────────────
@@ -1134,6 +1247,63 @@ async function removeDest(path){
   else if(r) toast(r.error||'Cannot remove last destination','error');
 }
 
+// ── Custom Excludes ───────────────────────────────────────────────────────────
+function renderExcludes(exc){
+  $('excludes-list').innerHTML = exc.length===0
+    ? '<div class="empty">No custom excludes</div>'
+    : exc.map(p=>`<div class="row-item" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+        <code style="flex:1">${esc(p)}</code>
+        <button class="btn btn-muted" style="flex-shrink:0;font-size:.7rem;padding:3px 8px" onclick="removeExclude('${esc(p)}')">✕</button>
+      </div>`).join('');
+}
+function showAddExclude(){ $('add-exclude-form').style.display='flex'; $('exc-pattern-inp').focus(); }
+function hideAddExclude(){ $('add-exclude-form').style.display='none'; $('exc-pattern-inp').value=''; }
+async function addExclude(){
+  const p=$('exc-pattern-inp').value.trim();
+  if(!p){ toast('Enter a pattern','error'); return; }
+  const r=await api('POST','/api/excludes/add',{pattern:p});
+  if(r&&r.ok){ toast('Exclude pattern added','success'); hideAddExclude(); loadSettings(); }
+}
+async function removeExclude(pattern){
+  const r=await api('POST','/api/excludes/remove',{pattern});
+  if(r&&r.ok){ toast('Exclude removed','success'); loadSettings(); }
+}
+
+// ── Suggested Folders ─────────────────────────────────────────────────────────
+async function loadSuggestions(){
+  const wrap=$('suggestions-wrap');
+  if(!wrap) return;
+  const r = await api('GET','/api/suggest-folders');
+  if(!r||!r.length){ wrap.style.display='none'; return; }
+  wrap.style.display='block';
+  $('suggestions-grid').innerHTML = r.map(f=>`
+    <div class="preset-btn" onclick="quickAddSource('${esc(f.path)}','${esc(f.label)}')">
+      <div style="font-size:.68rem;color:var(--muted)">${esc(f.path.replace(/\/Users\/[^/]+/,'~'))}</div>
+      <div class="preset-label">📁 ${esc(f.label)}</div>
+    </div>`).join('');
+}
+async function quickAddSource(path, label){
+  const r=await api('POST','/api/sources/add',{entry:`${path}|${label}`});
+  if(r&&r.ok){ toast(`${label} added as source`,'success'); loadSettings(); }
+}
+
+// ── Per-source backup buttons (Backup page) ───────────────────────────────────
+async function loadBackupSources(){
+  const r=await api('GET','/api/config');
+  if(r) loadSourceButtons(r.sources||[]);
+}
+function loadSourceButtons(srcs){
+  const panel=$('per-source-panel'), btns=$('source-backup-btns');
+  if(!panel||!btns) return;
+  if(!srcs||!srcs.length){ panel.style.display='none'; return; }
+  panel.style.display='block';
+  btns.innerHTML = srcs.map(line=>{
+    const parts=line.split('|');
+    const path=parts[0], label=parts[1]||path.split('/').pop();
+    return `<button class="btn btn-muted" onclick="runBackup(false,'${esc(path)}')">📁 ${esc(label)} only</button>`;
+  }).join('');
+}
+
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   // Cmd+R → manual refresh (prevent browser reload)
@@ -1146,6 +1316,7 @@ document.addEventListener('keydown', e => {
   if(e.key === 'Escape'){
     if($('add-source-form') && $('add-source-form').style.display!=='none') hideAddSource();
     if($('add-dest-form')   && $('add-dest-form').style.display!=='none')   hideAddDest();
+    if($('add-exclude-form')&& $('add-exclude-form').style.display!=='none') hideAddExclude();
   }
 });
 
