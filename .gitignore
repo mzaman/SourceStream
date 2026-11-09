@@ -1,0 +1,38 @@
+# ── Dist & Build Output ───────────────────────────────────────────────────────
+dist/
+build/stage/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+*.icloud
+
+# ── User data (never commit personal config or logs) ─────────────────────────
+*.log
+status.json
+run_notify_wrapper.sh
+sourcestream.conf
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+*.pem
+*.key
+*.env
+.env*
