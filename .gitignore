@@ -36,3 +36,5 @@ sourcestream.conf
 *.key
 *.env
 .env*
+*.pyc
+__pycache__/
