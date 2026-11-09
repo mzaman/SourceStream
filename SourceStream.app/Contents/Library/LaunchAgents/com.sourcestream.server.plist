@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!--
+    SourceStream LaunchAgent — stamped by the launcher on first boot.
+    Placeholders below are replaced at install/first-run time:
+        __PYTHON__    → /opt/homebrew/bin/python3  (or /usr/bin/python3)
+        __SERVER_PY__ → /Applications/SourceStream.app/Contents/Resources/server.py
+        __RES_DIR__   → /Applications/SourceStream.app/Contents/Resources
+        __LOGS_DIR__  → /Users/<name>/.sourcestream/logs
+    -->
     <key>Label</key>
     <string>com.sourcestream.server</string>
 
@@ -13,10 +20,10 @@
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Applications/SourceStream.app/Contents/Resources</string>
+    <string>__RES_DIR__</string>
 
-    <key>RunAtLoad</key>    <true/>
-    <key>KeepAlive</key>    <true/>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
 
     <key>StandardOutPath</key>
     <string>__LOGS_DIR__/server.log</string>
@@ -30,4 +37,3 @@
     </dict>
 </dict>
 </plist>
-

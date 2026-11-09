@@ -41,14 +41,38 @@ log_err() {
 # ── Defaults ──────────────────────────────────────────────────────────────────
 DIRECT_TO_DRIVE="true"
 MAX_ARCHIVES_TO_KEEP=3
+COMPRESSION_LEVEL=6          # gzip 1(fast)–9(best), default 6
+ARCHIVE_PREFIX="{label}"     # archive name template: {label}, {hostname}, {date}
+HOSTNAME_IN_NAME="false"
 SOURCE_ENTRIES=()
 DEST_ENTRIES=()
+CUSTOM_EXCLUDES=()
+
+# ── Auto-detect Google Drive path (any user, any Google account) ───────────────
+detect_gdrive() {
+    local cs="$HOME/Library/CloudStorage"
+    if [ -d "$cs" ]; then
+        # Pick first GoogleDrive-* folder found (handles any email address)
+        local d
+        for d in "$cs"/GoogleDrive-*/; do
+            [ -d "${d}My Drive" ] && { echo "${d}My Drive/Developer Backups"; return; }
+        done
+    fi
+    # Legacy Google Drive location
+    for d in "$HOME/Google Drive/My Drive" "$HOME/Google Drive"; do
+        [ -d "$d" ] && { echo "$d/Developer Backups"; return; }
+    done
+    # Fallback — user will configure via Dashboard
+    echo "$HOME/Library/CloudStorage/GoogleDrive/My Drive/Developer Backups"
+}
 
 # ── Initialize config if missing ──────────────────────────────────────────────
 initialize_config() {
     if [ ! -f "$CONF_FILE" ]; then
         mkdir -p "$(dirname "$CONF_FILE")"
-        cat > "$CONF_FILE" << 'CONF'
+        local DEFAULT_GDRIVE
+        DEFAULT_GDRIVE="$(detect_gdrive)"
+        cat > "$CONF_FILE" << CONF
 # SourceStream Configuration
 # ~/.sourcestream/config/sourcestream.conf
 # Managed by SourceStream Dashboard or edited manually.
@@ -56,14 +80,20 @@ initialize_config() {
 [settings]
 DIRECT_TO_DRIVE=true
 MAX_ARCHIVES_TO_KEEP=3
+COMPRESSION_LEVEL=6
+ARCHIVE_PREFIX={label}
+HOSTNAME_IN_NAME=false
 
 [sources]
-/Users/masud/Developer|Developer
+$HOME/Developer|Developer
 
 [destinations]
-/Users/masud/Library/CloudStorage/GoogleDrive-umasud.zmn@gmail.com/My Drive/Developer Backups|Google Drive
+$DEFAULT_GDRIVE|Google Drive
+
+[excludes]
 CONF
         log_msg "INFO" "Created default config: $CONF_FILE"
+        log_msg "INFO" "   Auto-detected destination: $DEFAULT_GDRIVE"
     fi
 }
 
@@ -88,11 +118,15 @@ load_config() {
                     case "$key" in
                         DIRECT_TO_DRIVE)      DIRECT_TO_DRIVE="$val" ;;
                         MAX_ARCHIVES_TO_KEEP) MAX_ARCHIVES_TO_KEEP="$val" ;;
+                        COMPRESSION_LEVEL)    COMPRESSION_LEVEL="$val" ;;
+                        ARCHIVE_PREFIX)       ARCHIVE_PREFIX="$val" ;;
+                        HOSTNAME_IN_NAME)     HOSTNAME_IN_NAME="$val" ;;
                     esac
                 fi
                 ;;
             sources)      [[ "$trimmed" == *"|"* ]] && SOURCE_ENTRIES+=("$trimmed") ;;
             destinations) [[ "$trimmed" == *"|"* ]] && DEST_ENTRIES+=("$trimmed") ;;
+            excludes)     [[ -n "$trimmed" ]] && CUSTOM_EXCLUDES+=("$trimmed") ;;
         esac
     done < "$CONF_FILE"
 }
@@ -110,9 +144,39 @@ log_msg "INFO" "   Destinations: ${#DEST_ENTRIES[@]} configured"
 log_msg "INFO" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+HOSTNAME_SHORT=$(hostname -s 2>/dev/null | tr -cd '[:alnum:]_-' | cut -c1-20)
+
+# ── Archive name helper ────────────────────────────────────────────────────────
+# Builds archive filename from config template.
+# Template tokens:  {label} → sanitized source label
+#                   {hostname} → machine short hostname
+#                   {date} → YYYYMMDD
+#                   {time} → HHMMSS
+# Default template "{label}" produces:  Developer_20261109_020001.tar.gz
+make_archive_name() {
+    local RAW_LABEL="$1"
+    # Sanitize: spaces→underscores, strip special chars, max 40 chars
+    local SAFE_LABEL
+    SAFE_LABEL=$(echo "$RAW_LABEL" | tr ' ' '_' | tr -cd '[:alnum:]_-' | cut -c1-40)
+    [ -z "$SAFE_LABEL" ] && SAFE_LABEL="Backup"
+
+    local DATE_PART TIME_PART
+    DATE_PART=$(date +"%Y%m%d")
+    TIME_PART=$(date +"%H%M%S")
+
+    local TEMPLATE="${ARCHIVE_PREFIX:-{label}}"
+    local NAME="$TEMPLATE"
+    NAME="${NAME//\{label\}/$SAFE_LABEL}"
+    NAME="${NAME//\{hostname\}/$HOSTNAME_SHORT}"
+    NAME="${NAME//\{date\}/$DATE_PART}"
+    NAME="${NAME//\{time\}/$TIME_PART}"
+
+    # Always append timestamp suffix so archives never overwrite each other
+    echo "${NAME}_${DATE_PART}_${TIME_PART}.tar.gz"
+}
 
 # ── Flush leftover /tmp fragments from aborted sessions ───────────────────────
-rm -f /tmp/*_Backup_*.tar.gz 2>/dev/null
+rm -f /tmp/*.tar.gz 2>/dev/null
 log_msg "INFO" "🧹 /tmp cleanup scan complete."
 
 # ── tar exclude flags ─────────────────────────────────────────────────────────
@@ -136,6 +200,16 @@ TAR_EXCLUDES=(
     --exclude="*.tar.gz"            --exclude="*.tar"
     --exclude=".git/objects/pack"   --exclude="*.ipc"
 )
+
+# Append any user-defined custom excludes from config [excludes] section
+for CUSTOM_PAT in "${CUSTOM_EXCLUDES[@]}"; do
+    TAR_EXCLUDES+=(--exclude="$CUSTOM_PAT")
+done
+
+# Compression flag: -1 (fast) through -9 (best). Default -6.
+CLEVEL="${COMPRESSION_LEVEL:-6}"
+[[ "$CLEVEL" =~ ^[1-9]$ ]] || CLEVEL=6
+export GZIP="-${CLEVEL}"
 
 # ==============================================================================
 # FUNCTION: preflight_space_check
@@ -185,7 +259,12 @@ apply_retention_policy() {
     }
 
     local ALL_ARCHIVES COUNT
-    ALL_ARCHIVES=$(ls -1 "$DEST/${PREFIX}_Backup_"*.tar.gz 2>/dev/null | sort)
+    # Match archives by sanitized label prefix — handles any naming scheme
+    local SAFE_PREFIX
+    SAFE_PREFIX=$(echo "$PREFIX" | tr ' ' '_' | tr -cd '[:alnum:]_-')
+    ALL_ARCHIVES=$(ls -1t "$DEST/"*.tar.gz 2>/dev/null \
+        | grep "/${SAFE_PREFIX}_" \
+        | sort -t_ -k2,3)
     COUNT=$(echo "$ALL_ARCHIVES" | grep -c '.tar.gz' 2>/dev/null || echo 0)
 
     if [ "$COUNT" -le "$MAX_ARCHIVES_TO_KEEP" ]; then
@@ -231,8 +310,9 @@ process_backup() {
         return 1
     fi
 
-    # Build archive filename (never overwrites previous archives)
-    local TAR_NAME="${SRC_NAME}_Backup_${TIMESTAMP}.tar.gz"
+    # Build archive filename — derived from source label (not hardcoded "Developer_Backup")
+    local TAR_NAME
+    TAR_NAME="$(make_archive_name "$SRC_NAME")"
     log_msg "INFO" "   Archive: $TAR_NAME"
 
     # Determine write strategy
@@ -457,6 +537,22 @@ collect_archives_json() {
 # ==============================================================================
 # MAIN
 # ==============================================================================
+
+# ── Single-source override (from /api/run-backup with source_path body param) ──
+# When server.py sets SS_SINGLE_SOURCE, filter SOURCE_ENTRIES to only that path
+if [ -n "$SS_SINGLE_SOURCE" ]; then
+    FILTERED=()
+    for E in "${SOURCE_ENTRIES[@]}"; do
+        [[ "${E%%|*}" == "$SS_SINGLE_SOURCE" ]] && FILTERED+=("$E")
+    done
+    if [ "${#FILTERED[@]}" -gt 0 ]; then
+        SOURCE_ENTRIES=("${FILTERED[@]}")
+        log_msg "INFO" "🎯 Single-source mode: ${SOURCE_ENTRIES[0]##*|} ($SS_SINGLE_SOURCE)"
+    else
+        log_msg "WARN" "⚠️  SS_SINGLE_SOURCE='$SS_SINGLE_SOURCE' not found in config — running all sources."
+    fi
+fi
+
 BACKUP_RUN_START_TS=$(date +"%Y-%m-%d %H:%M:%S")
 write_status_json "running"
 
