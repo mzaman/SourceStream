@@ -211,7 +211,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except: c["archive_count"] = 0
             c["conf_path"]    = str(CONF)
             c["logs_path"]    = str(LOGS_DIR)
-            c["app_version"]  = "1.0.0"
+            c["app_version"]  = APP_VERSION
             return self.jsend(c)
 
         if p == "/api/config":
@@ -221,7 +221,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "excludes": exc,
                 "config_path": str(CONF),
                 "logs_path": str(LOGS_DIR),
-                "app_version": "1.0.0",
+                "app_version": APP_VERSION,
             })
 
         if p == "/api/progress":
