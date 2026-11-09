@@ -29,6 +29,7 @@ if [ ! -f "$PLIST_DEST" ]; then
     sed \
         -e "s|__PYTHON__|$PYTHON|g" \
         -e "s|__SERVER_PY__|$SERVER_PY|g" \
+        -e "s|__RES_DIR__|$RESOURCES|g" \
         -e "s|__LOGS_DIR__|$LOGS_DIR|g" \
         "$PLIST_SRC" > "$PLIST_DEST"
     launchctl load "$PLIST_DEST" 2>/dev/null
