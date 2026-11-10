@@ -18,13 +18,14 @@ LOG_DIR="$SS_DIR/logs"
 OUTPUT_LOG="$LOG_DIR/backup.log"
 ERROR_LOG="$LOG_DIR/error.log"
 STATUS_JSON="$SS_DIR/status.json"
+MANIFEST_DIR="$SS_DIR/manifests"      # stores per-source incremental timestamps
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 # Progress-tracking globals (written to status.json)
 CURRENT_ARCHIVE_PATH=""    # set before tar starts
 ESTIMATED_SIZE_MB=0        # set by preflight_space_check
 
-mkdir -p "$LOG_DIR" "$SS_DIR/config"
+mkdir -p "$LOG_DIR" "$SS_DIR/config" "$MANIFEST_DIR"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 log_msg() {
@@ -51,6 +52,7 @@ SOURCE_EXCL_LINES=()       # per-source excludes: "path:pattern" entries
 CURRENT_EXCL_SRC=""        # active source path while parsing [excludes:/path] sections
 BACKUP_VERIFY="false"      # auto-verify archive integrity after each backup
 ARCHIVE_FORMAT="tar.gz"    # archive type: tar.gz | tar.bz2 | tar.xz | zip
+BACKUP_MODE="full"         # backup mode: full | incremental
 SS_DRY_RUN="${SS_DRY_RUN:-}"  # set by server for dry-run mode (env override)
 
 # ── Auto-detect Google Drive path (any user, any Google account) ───────────────
@@ -91,6 +93,7 @@ HOSTNAME_IN_NAME=false
 ARCHIVE_FORMAT=tar.gz
 BACKUP_VERIFY=false
 NOTIFY_ON_COMPLETE=false
+BACKUP_MODE=full
 
 [sources]
 $HOME/Developer|Developer
@@ -141,6 +144,7 @@ load_config() {
                         BACKUP_VERIFY)        BACKUP_VERIFY="$val" ;;
                         ARCHIVE_FORMAT)       ARCHIVE_FORMAT="$val" ;;
                         NOTIFY_ON_COMPLETE)   NOTIFY_ON_COMPLETE="$val" ;;
+                        BACKUP_MODE)          BACKUP_MODE="$val" ;;
                     esac
                 fi
                 ;;
@@ -266,7 +270,7 @@ _PARTIAL_FILES=()
 trap 'for pf in "${_PARTIAL_FILES[@]}"; do [ -f "$pf" ] && rm -f "$pf" && log_msg "WARN" "🧹 Cleaned up partial archive: $(basename "$pf")"; done' EXIT
 
 # ── Dry-run mode ──────────────────────────────────────────────────────────────
-if [ -n "$SS_DRY_RUN" ]; then
+    if [ -n "$SS_DRY_RUN" ]; then
     log_msg "INFO" "🔍 DRY-RUN MODE — no archives will be written."
     for SRC_ENTRY in "${SOURCE_ENTRIES[@]}"; do
         SRC_PATH="${SRC_ENTRY%%|*}"
@@ -277,6 +281,18 @@ if [ -n "$SS_DRY_RUN" ]; then
         log_msg "INFO" "      Files: ~$FC  |  Raw size: $SZ"
         ARCNAME=$(make_archive_name "$SRC_NAME")
         log_msg "INFO" "      Would create: $ARCNAME"
+        # Incremental dry-run: show changed file count
+        if [ "${BACKUP_MODE:-full}" = "incremental" ]; then
+            CHANGED=$(count_changed_files "$SRC_PATH" "$SRC_NAME")
+            CHANGED=$(( ${CHANGED:-0} + 0 ))
+            MANIFEST=$(get_manifest_path "$SRC_NAME")
+            if [ -f "$MANIFEST" ]; then
+                LAST_TS=$(cat "$MANIFEST" 2>/dev/null || echo "unknown")
+                log_msg "INFO" "      Incremental: $CHANGED changed file(s) since $LAST_TS"
+            else
+                log_msg "INFO" "      Incremental: first run — full baseline ($FC files)"
+            fi
+        fi
     done
     log_msg "INFO" "🔍 DRY-RUN complete. No files written."
     exit 0
@@ -429,6 +445,61 @@ apply_retention_policy() {
 }
 
 # ==============================================================================
+# FUNCTION: incremental_manifest helpers
+# Incremental backups use a per-source manifest file that records the timestamp
+# of the last successful backup. On subsequent runs, only files modified since
+# that timestamp are archived (using tar --newer-mtime).
+#
+# Manifest path: ~/.sourcestream/manifests/<safe_label>.manifest
+# Contents: a single ISO-8601 date string written by date(1)
+# ==============================================================================
+
+# Returns the manifest file path for a given source label.
+get_manifest_path() {
+    local SRC_LABEL="$1"
+    local SAFE
+    SAFE=$(echo "$SRC_LABEL" | tr ' ' '_' | tr -cd '[:alnum:]_-' | cut -c1-60)
+    echo "$MANIFEST_DIR/${SAFE}.manifest"
+}
+
+# Returns the mtime reference file path (a sentinel file whose mtime = last backup)
+get_mtime_sentinel() {
+    local SRC_LABEL="$1"
+    local SAFE
+    SAFE=$(echo "$SRC_LABEL" | tr ' ' '_' | tr -cd '[:alnum:]_-' | cut -c1-60)
+    echo "$MANIFEST_DIR/${SAFE}.mtime"
+}
+
+# Write the sentinel file (touch it) to record now as the last backup time.
+# Called AFTER a successful backup so the next incremental uses this mtime.
+update_manifest() {
+    local SRC_LABEL="$1"
+    local SENTINEL
+    SENTINEL=$(get_mtime_sentinel "$SRC_LABEL")
+    touch "$SENTINEL" 2>/dev/null && \
+        log_msg "INFO" "   📝 Incremental manifest updated: $(basename "$SENTINEL")" || \
+        log_msg "WARN" "   ⚠️  Could not update incremental manifest."
+    # Also write human-readable timestamp for the dashboard
+    local MANIFEST
+    MANIFEST=$(get_manifest_path "$SRC_LABEL")
+    date +"%Y-%m-%d %H:%M:%S" > "$MANIFEST" 2>/dev/null || true
+}
+
+# Returns the number of files that changed since the last incremental backup.
+# Used in dry-run and log reporting.
+count_changed_files() {
+    local SRC_PATH="$1" SRC_LABEL="$2"
+    local SENTINEL
+    SENTINEL=$(get_mtime_sentinel "$SRC_LABEL")
+    if [ ! -f "$SENTINEL" ]; then
+        # No sentinel → treat as full
+        find "$SRC_PATH" -type f 2>/dev/null | wc -l | tr -d ' '
+    else
+        find "$SRC_PATH" -newer "$SENTINEL" -type f 2>/dev/null | wc -l | tr -d ' '
+    fi
+}
+
+# ==============================================================================
 # FUNCTION: process_backup
 # ==============================================================================
 process_backup() {
@@ -501,6 +572,33 @@ process_backup() {
     done < <(build_source_excludes "$SRC_PATH")
     log_msg "INFO" "   Excludes: ${#MERGED_EXCLUDES[@]} total flags (global + per-source)"
 
+    # ── Incremental mode: determine --newer-mtime reference ────────────────────
+    local INCR_FLAG=""
+    local IS_INCREMENTAL=false
+    if [ "${BACKUP_MODE:-full}" = "incremental" ]; then
+        local SENTINEL
+        SENTINEL=$(get_mtime_sentinel "$SRC_NAME")
+        if [ -f "$SENTINEL" ]; then
+            # Files modified after the sentinel's mtime will be archived
+            INCR_FLAG="--newer-mtime=$(date -r "$SENTINEL" +"%Y-%m-%d %H:%M:%S" 2>/dev/null)"
+            IS_INCREMENTAL=true
+            local CHANGED_FILES
+            CHANGED_FILES=$(count_changed_files "$REAL_SRC" "$SRC_NAME")
+            CHANGED_FILES=$(( ${CHANGED_FILES:-0} + 0 ))
+            log_msg "INFO" "   Mode: INCREMENTAL — $CHANGED_FILES changed file(s) since last backup"
+            if [ "$CHANGED_FILES" -eq 0 ]; then
+                log_msg "INFO" "   ✅ No changes detected — skipping archive creation."
+                update_manifest "$SRC_NAME"
+                return 0
+            fi
+        else
+            log_msg "INFO" "   Mode: INCREMENTAL (first run — full baseline backup)"
+            IS_INCREMENTAL=true
+        fi
+    else
+        log_msg "INFO" "   Mode: FULL backup"
+    fi
+
     # ── Run tar/zip ────────────────────────────────────────────────────────────
     local ARCH_EXT; ARCH_EXT=$(get_archive_ext)
     log_msg "INFO" "⏳ Compressing [${ARCH_EXT}] → $STAGE_PATH"
@@ -525,23 +623,52 @@ process_backup() {
             [[ "$_PAT" == */* ]] || _PAT="*/${_PAT}/*"
             ZIP_EXCL_FLAGS+=("-x" "$_PAT")
         done
+
+        # Incremental zip: collect only changed files via find -newer sentinel
+        local INCR_ZIP_LIST=""
+        if [ "$IS_INCREMENTAL" = "true" ] && [ -f "$(get_mtime_sentinel "$SRC_NAME")" ]; then
+            local _SENT; _SENT=$(get_mtime_sentinel "$SRC_NAME")
+            INCR_ZIP_LIST=$(mktemp /tmp/ss_zip_list.XXXXXX)
+            (
+                cd "$(dirname "$REAL_SRC")" || exit 1
+                find "$(basename "$REAL_SRC")" -newer "$_SENT" -type f 2>/dev/null \
+                    | grep -v "\.DS_Store\|/node_modules/\|/__pycache__/\|\.photoslibrary/" \
+                    > "$INCR_ZIP_LIST"
+            )
+            local _ZIFC; _ZIFC=$(wc -l < "$INCR_ZIP_LIST" | tr -d ' ')
+            log_msg "INFO" "   Incremental zip: $_ZIFC changed file(s)"
+        fi
+
         (
             cd "$(dirname "$REAL_SRC")" || exit 1
-            COPYFILE_DISABLE=1 zip -r -${CLEVEL} "$STAGE_PATH" "$(basename "$REAL_SRC")" \
-                -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
-                -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
-                -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
-                "${ZIP_EXCL_FLAGS[@]}" \
-                2>"$TAR_STDERR_TMP"
+            if [ -n "$INCR_ZIP_LIST" ] && [ -s "$INCR_ZIP_LIST" ]; then
+                COPYFILE_DISABLE=1 zip -r -${CLEVEL} "$STAGE_PATH" \
+                    -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
+                    -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
+                    -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
+                    "${ZIP_EXCL_FLAGS[@]}" \
+                    - < "$INCR_ZIP_LIST" \
+                    2>"$TAR_STDERR_TMP"
+            else
+                COPYFILE_DISABLE=1 zip -r -${CLEVEL} "$STAGE_PATH" "$(basename "$REAL_SRC")" \
+                    -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
+                    -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
+                    -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
+                    "${ZIP_EXCL_FLAGS[@]}" \
+                    2>"$TAR_STDERR_TMP"
+            fi
         )
+        [ -n "$INCR_ZIP_LIST" ] && rm -f "$INCR_ZIP_LIST"
     else
         # tar format (gzip / bzip2 / xz) — MERGED_EXCLUDES has global + per-source
+        # For incremental tar: pass --newer-mtime="<sentinel-mtime>" to only archive changed files
         (
             cd "$(dirname "$REAL_SRC")" || exit 1
             COPYFILE_DISABLE=1 tar \
                 "${MERGED_EXCLUDES[@]}" \
                 --format=gnutar \
                 --no-xattrs \
+                ${INCR_FLAG:+"$INCR_FLAG"} \
                 -c${_COMP_FLAG}f "$STAGE_PATH" \
                 -h \
                 "$(basename "$REAL_SRC")" \
@@ -650,6 +777,10 @@ process_backup() {
     fi
 
     log_msg "SUCCESS" "✅ Backup complete: $SRC_NAME → $TAR_NAME"
+
+    # Update incremental manifest so the next run only archives changes since now
+    update_manifest "$SRC_NAME"
+
     return 0
 }
 

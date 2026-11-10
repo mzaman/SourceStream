@@ -61,6 +61,7 @@ required = {
     "BACKUP_VERIFY":       "false",
     "ARCHIVE_FORMAT":      "tar.gz",
     "NOTIFY_ON_COMPLETE":  "false",
+    "BACKUP_MODE":         "full",
 }
 
 # Find the [settings] section
