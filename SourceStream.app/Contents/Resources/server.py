@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SourceStream Dashboard Server  v1.0.6
+SourceStream Dashboard Server  v1.0.7
 SourceStream.app/Contents/Resources/server.py
 
 Binds to 127.0.0.1:7474.
@@ -11,7 +11,7 @@ Run via LaunchAgent (auto-starts at login) or via the app launcher.
 import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil, platform, sys
 from pathlib import Path
 
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 PORT        = 7474
 APP_RES     = Path(__file__).parent          # …/SourceStream.app/Contents/Resources/
 SS_DIR      = Path.home() / ".sourcestream"
@@ -55,6 +55,7 @@ DEFAULT_SETTINGS = {
     "HOSTNAME_IN_NAME":    "false",
     "BACKUP_VERIFY":       "false",
     "ARCHIVE_FORMAT":      "tar.gz",
+    "NOTIFY_ON_COMPLETE":  "false",
 }
 
 def parse_conf():
@@ -289,7 +290,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/logs/output":
             try:
-                lines = OUT_LOG.read_text().splitlines()[-150:]
+                qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                n_lines = int(qs.get('lines', [200])[0])
+                lines = OUT_LOG.read_text().splitlines()[-n_lines:]
                 return self.jsend({"lines": lines, "bytes": OUT_LOG.stat().st_size})
             except:
                 return self.jsend({"lines": [], "bytes": 0})
@@ -606,6 +609,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     try: os.remove(f); removed += 1
                     except OSError: pass
             return self.jsend({"ok": True, "removed": removed})
+
+        if p == "/api/clear-errors":
+            try:
+                ERR_LOG.write_text("")
+                return self.jsend({"ok": True})
+            except Exception as e:
+                return self.jsend({"ok": False, "error": str(e)})
 
         if p == "/api/rotate-logs":
             try:

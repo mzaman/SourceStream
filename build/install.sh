@@ -11,7 +11,7 @@
 set -e
 
 APP_NAME="SourceStream"
-APP_VERSION="1.0.3"
+APP_VERSION="1.0.7"
 APP_BUNDLE="SourceStream.app"
 SRC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SRC_APP="$SRC_DIR/$APP_BUNDLE"
@@ -100,6 +100,7 @@ DEFAULT_SETTINGS[ARCHIVE_PREFIX]="{label}"
 DEFAULT_SETTINGS[HOSTNAME_IN_NAME]="false"
 DEFAULT_SETTINGS[BACKUP_VERIFY]="false"
 DEFAULT_SETTINGS[ARCHIVE_FORMAT]="tar.gz"
+DEFAULT_SETTINGS[NOTIFY_ON_COMPLETE]="false"
 
 if [ ! -f "$CONF_FILE" ]; then
     # ── Fresh install: auto-detect Google Drive and write default config ───────
@@ -153,7 +154,7 @@ else
 
     # Inject each missing key at SETTINGS_END
     INJECT_LINES=""
-    for KEY in DIRECT_TO_DRIVE MAX_ARCHIVES_TO_KEEP COMPRESSION_LEVEL ARCHIVE_PREFIX HOSTNAME_IN_NAME BACKUP_VERIFY ARCHIVE_FORMAT; do
+    for KEY in DIRECT_TO_DRIVE MAX_ARCHIVES_TO_KEEP COMPRESSION_LEVEL ARCHIVE_PREFIX HOSTNAME_IN_NAME BACKUP_VERIFY ARCHIVE_FORMAT NOTIFY_ON_COMPLETE; do
         if ! echo "$EXISTING_KEYS" | grep -q "^${KEY}$"; then
             VAL="${DEFAULT_SETTINGS[$KEY]}"
             INJECT_LINES="${INJECT_LINES}${KEY}=${VAL}\n"
