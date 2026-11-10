@@ -55,7 +55,7 @@ CUSTOM_EXCLUDES=()
 SOURCE_EXCL_LINES=()       # per-source excludes: "path:pattern" entries
 CURRENT_EXCL_SRC=""        # active source path while parsing [excludes:/path] sections
 BACKUP_VERIFY="false"      # auto-verify archive integrity after each backup
-ARCHIVE_FORMAT="tar.gz"    # archive type: tar.gz | tar.bz2 | tar.xz | zip
+ARCHIVE_FORMAT="zip"      # archive type: tar.gz | tar.bz2 | tar.xz | zip
 BACKUP_MODE="full"         # backup mode: full | incremental
 SS_DRY_RUN="${SS_DRY_RUN:-}"  # set by server for dry-run mode (env override)
 
@@ -94,9 +94,9 @@ MAX_ARCHIVES_TO_KEEP=3
 COMPRESSION_LEVEL=6
 ARCHIVE_PREFIX={label}
 HOSTNAME_IN_NAME=false
-ARCHIVE_FORMAT=tar.gz
+ARCHIVE_FORMAT=zip
 BACKUP_VERIFY=false
-NOTIFY_ON_COMPLETE=false
+NOTIFY_ON_COMPLETE=true
 BACKUP_MODE=full
 
 [sources]
@@ -917,6 +917,15 @@ process_backup() {
     fi
 
     log_msg "SUCCESS" "✅ Backup complete: $SRC_NAME → $TAR_NAME"
+
+    # Unregister STAGE_PATH from the EXIT trap — archive is complete and
+    # must NOT be deleted. The trap only cleans up genuinely partial files
+    # (i.e. those left behind by an unexpected crash before this point).
+    local _new_partial=()
+    for _pf in "${_PARTIAL_FILES[@]}"; do
+        [ "$_pf" != "$STAGE_PATH" ] && _new_partial+=("$_pf")
+    done
+    _PARTIAL_FILES=("${_new_partial[@]}")
 
     # Update incremental manifest so the next run only archives changes since now
     update_manifest "$SRC_NAME"
