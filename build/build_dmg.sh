@@ -207,7 +207,7 @@ COMPRESSION_LEVEL=6
 ARCHIVE_PREFIX={label}
 HOSTNAME_IN_NAME=false
 BACKUP_VERIFY=false
-ARCHIVE_FORMAT=tar.gz
+ARCHIVE_FORMAT=zip
 
 [sources]
 $HOME/Developer|Developer
@@ -251,7 +251,9 @@ REQUIRED_KEYS = {
     'ARCHIVE_PREFIX':       '{label}',
     'HOSTNAME_IN_NAME':     'false',
     'BACKUP_VERIFY':        'false',
-    'ARCHIVE_FORMAT':       'tar.gz',
+    'ARCHIVE_FORMAT':       'zip',
+    'NOTIFY_ON_COMPLETE':   'true',
+    'BACKUP_MODE':          'full',
 }
 
 # Find which keys are already present (case-insensitive)
@@ -457,6 +459,26 @@ echo "║  🌐  Or browse to: http://127.0.0.1:7474/                 ║"
 echo "║  📁  Your data:    ~/.sourcestream/                       ║"
 echo "║  📅  Set a schedule in Dashboard → Schedule page          ║"
 echo "╚════════════════════════════════════════════════════════════╝"
+fi
+echo ""
+
+# ── Full Disk Access prompt ───────────────────────────────────────────────────
+# SourceStream needs Full Disk Access to back up Photos, Mail, Messages and
+# other protected system folders. Prompt the user now so backups work fully.
+echo ""
+inf "Requesting Full Disk Access permission..."
+_FDA_RESULT=$(osascript 2>/dev/null <<'APPLESCRIPT'
+display dialog "SourceStream needs Full Disk Access to back up all your files, including Photos, Mail, and Messages." & return & return & "To grant access:" & return & "  1. Click 'Open Privacy Settings'" & return & "  2. Click the '+' button" & return & "  3. Add SourceStream from your Applications folder" & return & "  4. Enable the toggle next to SourceStream" & return & return & "You can skip this now and do it later in:" & return & "System Settings → Privacy & Security → Full Disk Access" with title "SourceStream — Permission Required" buttons {"Skip for Now", "Open Privacy Settings"} default button "Open Privacy Settings" with icon caution
+APPLESCRIPT
+)
+if echo "$_FDA_RESULT" | grep -q "Open Privacy Settings"; then
+    open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
+    echo "   ↗  Opened System Settings → Full Disk Access"
+    echo "      Add SourceStream from Applications, then return here."
+    sleep 3
+else
+    wrn "Full Disk Access skipped — some protected files may not be backed up."
+    wrn "You can grant it later: System Settings → Privacy & Security → Full Disk Access"
 fi
 echo ""
 
