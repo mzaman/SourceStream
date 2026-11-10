@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SourceStream Dashboard Server  v1.0.8
+SourceStream Dashboard Server  v1.0.10
 SourceStream.app/Contents/Resources/server.py
 
 Binds to 127.0.0.1:7474.
@@ -11,7 +11,7 @@ Run via LaunchAgent (auto-starts at login) or via the app launcher.
 import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil, platform, sys
 from pathlib import Path
 
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.10"
 PORT        = 7474
 APP_RES     = Path(__file__).parent          # …/SourceStream.app/Contents/Resources/
 SS_DIR      = Path.home() / ".sourcestream"
