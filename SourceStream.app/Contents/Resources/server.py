@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SourceStream Dashboard Server  v1.0.5
+SourceStream Dashboard Server  v1.0.6
 SourceStream.app/Contents/Resources/server.py
 
 Binds to 127.0.0.1:7474.
@@ -11,7 +11,7 @@ Run via LaunchAgent (auto-starts at login) or via the app launcher.
 import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil, platform, sys
 from pathlib import Path
 
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 PORT        = 7474
 APP_RES     = Path(__file__).parent          # …/SourceStream.app/Contents/Resources/
 SS_DIR      = Path.home() / ".sourcestream"
@@ -583,10 +583,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 pass
             return self.jsend({"ok": True})
 
+        if p == "/api/archive-delete":
+            arch_path = body.get("path", "").strip()
+            p_obj = Path(arch_path)
+            # Safety: only allow deleting files inside configured destination dirs
+            s2, src2, dst2, exc2, src_exc2 = parse_conf()
+            allowed_roots = [Path(e.split("|")[0]) for e in dst2 if "|" in e]
+            if not arch_path or not p_obj.exists():
+                return self.jsend({"ok": False, "error": "File not found"})
+            if not any(str(p_obj).startswith(str(r)) for r in allowed_roots):
+                return self.jsend({"ok": False, "error": "Path outside configured destinations — blocked"})
+            try:
+                p_obj.unlink()
+                return self.jsend({"ok": True})
+            except Exception as e:
+                return self.jsend({"ok": False, "error": str(e)})
+
         if p == "/api/clear-tmp":
-            files = glob.glob("/tmp/*.tar.gz")
-            for f in files: os.remove(f)
-            return self.jsend({"ok": True, "removed": len(files)})
+            removed = 0
+            for pat in ["/tmp/*.tar.gz", "/tmp/*.tar.bz2", "/tmp/*.tar.xz", "/tmp/*.zip"]:
+                for f in glob.glob(pat):
+                    try: os.remove(f); removed += 1
+                    except OSError: pass
+            return self.jsend({"ok": True, "removed": removed})
 
         if p == "/api/rotate-logs":
             try:
@@ -761,11 +780,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if source_path and src_path != source_path:
                     continue
                 try:
+                    # Build find exclusions from user's global excludes + common defaults
+                    _skip_defaults = ["node_modules", "vendor", ".gradle", "build/intermediates",
+                                      ".git/objects/pack", "__pycache__", "DerivedData",
+                                      ".venv", "venv", "Pods"]
+                    _user_excl = [p for p in exc if p and not p.startswith("#")]
+                    _all_skip  = _skip_defaults + _user_excl
+                    _find_excl = " ".join("-not -path '*/" + p.strip("*") + "/*'" for p in _all_skip)
                     r = sh(
-                        f"find {repr(src_path)} -not -path '*/node_modules/*'"
-                        " -not -path '*/vendor/*' -not -path '*/.gradle/*'"
-                        " -not -path '*/build/intermediates/*' -not -path '*/.git/objects/pack/*'"
+                        f"find {repr(src_path)} {_find_excl}"
                         " -not -name '.DS_Store' -not -name '*.tar.gz'"
+                        " -not -name '*.tar.bz2' -not -name '*.tar.xz' -not -name '*.zip'"
                         " -type f 2>/dev/null | wc -l",
                         shell=True
                     )
