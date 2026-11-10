@@ -34,14 +34,14 @@ def _find_gdrive() -> Path:
     if cs.is_dir():
         for d in sorted(cs.glob("GoogleDrive-*")):
             if (d / "My Drive").is_dir():
-                return d / "My Drive" / "Developer Backups"
+                return d / "My Drive" / "SourceStream Backups"
     for legacy in [
-        Path.home() / "Google Drive" / "My Drive" / "Developer Backups",
-        Path.home() / "Google Drive" / "Developer Backups",
+        Path.home() / "Google Drive" / "My Drive" / "SourceStream Backups",
+        Path.home() / "Google Drive" / "SourceStream Backups",
     ]:
         if legacy.parent.is_dir():
             return legacy
-    return Path.home() / "Library/CloudStorage/GoogleDrive/My Drive/Developer Backups"
+    return Path.home() / "Library/CloudStorage/GoogleDrive/My Drive/SourceStream Backups"
 
 GDRIVE = _find_gdrive()
 
