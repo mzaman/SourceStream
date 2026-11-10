@@ -1275,20 +1275,46 @@ function filterArchives(query){
   renderArchives(q ? _allArchives.filter(a=>a.name.toLowerCase().includes(q)||a.destination.toLowerCase().includes(q)) : _allArchives);
 }
 
+
+function archiveFmtBadge(name){
+  if(name.endsWith('.tar.bz2')) return '<span class="pill p-warn" style="font-size:.6rem">bz2</span>';
+  if(name.endsWith('.tar.xz'))  return '<span class="pill p-info" style="font-size:.6rem">xz</span>';
+  if(name.endsWith('.zip'))     return '<span class="pill p-ok"   style="font-size:.6rem">zip</span>';
+  return '<span class="pill p-muted" style="font-size:.6rem">gz</span>';
+}
+function archiveLabel(name){
+  return name.replace(/_\d{8}_\d{6}\.(tar\.gz|tar\.bz2|tar\.xz|zip)$/, '');
+}
 function renderArchives(list){
   $('arch-cnt').textContent=list.length+' file'+(list.length!==1?'s':'');
   if(!list.length){
     $('arch-tbody').innerHTML='<tr><td colspan="6" class="no-data">No archives found</td></tr>'; return;
   }
-  $('arch-tbody').innerHTML=list.map(a=>`<tr>
-    <td>${esc(a.name)}</td>
+  $('arch-tbody').innerHTML=list.map(a=>{
+    const lbl=archiveLabel(a.name);
+    return `<tr>
+    <td><div style="display:flex;align-items:center;gap:5px">${archiveFmtBadge(a.name)}<span style="font-family:monospace;font-size:.72rem">${esc(lbl)}</span></div>
+        <div style="color:var(--dim);font-size:.65rem;margin-top:2px">${esc(a.name)}</div></td>
     <td>${fmtMB(a.size_mb)}</td>
     <td>${pill(a.destination,'p-p')}</td>
     <td style="color:var(--dim)">${esc(a.created||'—')}</td>
     <td style="color:var(--muted)">${ago(a.created)}</td>
-    <td><button class="btn btn-muted" style="font-size:.68rem;padding:3px 8px"
-      onclick="verifyArchive('${esc(a.path)}',this)">🔍 Verify</button></td>
-  </tr>`).join('');
+    <td style="white-space:nowrap">
+      <button class="btn btn-muted" style="font-size:.68rem;padding:3px 8px;margin-right:3px"
+        onclick="verifyArchive('${esc(a.path)}',this)">🔍 Verify</button>
+      <button class="btn btn-muted" style="font-size:.68rem;padding:3px 8px;color:#f87171"
+        onclick="deleteArchive('${esc(a.path)}','${esc(a.name)}',this)">🗑</button>
+    </td>
+  </tr>`;}).join('');
+}
+
+
+async function deleteArchive(path, name, btn){
+  if(!confirm('Delete archive?\n\n'+name+'\n\nThis CANNOT be undone.')) return;
+  btn.textContent='…'; btn.disabled=true;
+  const r = await api('POST','/api/archive-delete',{path});
+  if(r && r.ok){ toast('🗑 Deleted: '+name,'success'); loadArchives(); }
+  else { toast('❌ Delete failed: '+(r&&r.error||'unknown'),'error'); btn.textContent='🗑'; btn.disabled=false; }
 }
 
 async function verifyArchive(path, btn){

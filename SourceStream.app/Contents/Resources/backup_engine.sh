@@ -279,7 +279,14 @@ if [ -n "$SS_DRY_RUN" ]; then
 fi
 
 # ── Flush leftover /tmp fragments from aborted sessions ───────────────────────
-rm -f /tmp/*.tar.gz 2>/dev/null
+# Only clean up archives that look like they were created by SourceStream
+# (they all start with an alphanumeric label and have a _YYYYMMDD_ datestamp).
+# We deliberately avoid 'rm -f /tmp/*.tar.gz' which could clobber other apps.
+for _TMP_EXT in tar.gz tar.bz2 tar.xz zip; do
+    for _TMP_F in /tmp/*_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]."${_TMP_EXT}"; do
+        [ -f "$_TMP_F" ] && rm -f "$_TMP_F" && log_msg "INFO" "🧹 Purged stale /tmp fragment: $(basename "$_TMP_F")"
+    done 2>/dev/null || true
+done
 log_msg "INFO" "🧹 /tmp cleanup scan complete."
 
 # ── tar exclude flags ─────────────────────────────────────────────────────────
@@ -504,13 +511,23 @@ process_backup() {
     local _COMP_FLAG; _COMP_FLAG=$(get_tar_comp_flag)
 
     if [ "$ARCH_EXT" = "zip" ]; then
-        # zip format — uses zip(1); per-source excludes not yet supported for zip
+        # zip format — uses zip(1); per-source excludes supported via -x flags
+        # Build zip -x flags from MERGED_EXCLUDES (convert --exclude=PATTERN → -x "*PATTERN*")
+        local ZIP_EXCL_FLAGS=()
+        for _EXCL_FLAG in "${MERGED_EXCLUDES[@]}"; do
+            # Strip "--exclude=" prefix
+            local _PAT="${_EXCL_FLAG#--exclude=}"
+            # Add leading/trailing glob for path segments if not already present
+            [[ "$_PAT" == */* ]] || _PAT="*/${_PAT}/*"
+            ZIP_EXCL_FLAGS+=("-x" "$_PAT")
+        done
         (
             cd "$(dirname "$REAL_SRC")" || exit 1
-            COPYFILE_DISABLE=1 zip -r "${CLEVEL}" "$STAGE_PATH" "$(basename "$REAL_SRC")" \
+            COPYFILE_DISABLE=1 zip -r -${CLEVEL} "$STAGE_PATH" "$(basename "$REAL_SRC")" \
                 -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
                 -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
                 -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
+                "${ZIP_EXCL_FLAGS[@]}" \
                 2>"$TAR_STDERR_TMP"
         )
     else
@@ -574,10 +591,10 @@ process_backup() {
     ARCHIVE_SIZE=$(du -sh "$STAGE_PATH" | cut -f1)
     log_msg "INFO" "   📦 Archive size: $ARCHIVE_SIZE"
 
-    # Auto-verify archive if BACKUP_VERIFY=true
+    # Auto-verify archive if BACKUP_VERIFY=true (format-aware via verify_archive)
     if [ "${BACKUP_VERIFY:-false}" = "true" ]; then
         log_msg "INFO" "   🔍 Auto-verifying archive integrity (${ARCH_EXT})..."
-        if tar -tzf "$STAGE_PATH" >/dev/null 2>>"$ERROR_LOG"; then
+        if verify_archive "$STAGE_PATH" >/dev/null 2>>"$ERROR_LOG"; then
             log_msg "INFO" "   ✅ Archive verified OK."
         else
             log_err "Archive verify FAILED for $STAGE_PATH — may be corrupt!"
@@ -722,7 +739,7 @@ collect_source_json() {
 collect_dest_json() {
     local LABEL="$1" PATH_VAL="$2" DEST_STATUS="$3"
     local ARCHIVE_CNT FREE_MB TOTAL_USED_MB
-    ARCHIVE_CNT=$(ls "$PATH_VAL/"*.tar.gz 2>/dev/null | wc -l | tr -d ' ')
+    ARCHIVE_CNT=$(ls "$PATH_VAL/"*.tar.gz "$PATH_VAL/"*.tar.bz2 "$PATH_VAL/"*.tar.xz "$PATH_VAL/"*.zip 2>/dev/null | grep -v "^ls:" | wc -l | tr -d ' ')
     FREE_MB=$(df -k "$PATH_VAL" 2>/dev/null | awk 'NR==2 {print int($4/1024)}')
     TOTAL_USED_MB=$(du -sm "$PATH_VAL" 2>/dev/null | awk '{print $1}')
     local ENTRY
@@ -743,7 +760,7 @@ collect_archives_json() {
         ENTRY="{\"name\":\"$fname\",\"size_mb\":${size_mb:-0},\"destination\":\"$DEST_LABEL\",\"created\":\"$created\"}"
         [ -n "$BACKUP_ARCHIVES_JSON" ] && BACKUP_ARCHIVES_JSON="$BACKUP_ARCHIVES_JSON,"
         BACKUP_ARCHIVES_JSON="$BACKUP_ARCHIVES_JSON$ENTRY"
-    done < <(ls -1t "$DEST_PATH/"*.tar.gz 2>/dev/null)
+    done < <(ls -1t "$DEST_PATH/"*.tar.gz "$DEST_PATH/"*.tar.bz2 "$DEST_PATH/"*.tar.xz "$DEST_PATH/"*.zip 2>/dev/null | grep -v "^ls:")
 }
 
 # ==============================================================================
