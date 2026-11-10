@@ -1,255 +1,331 @@
 # SourceStream
 
-> **Zero-SSD-bloat developer backup utility for macOS.**  
-> Compress your code environments, strip build noise, and stream clean archives directly to Google Drive — with no permanent local disk usage.
+> **v1.0.8** — Native macOS backup app with menu bar agent, incremental backup,
+> and cloud remote destinations (S3 / B2 / rclone).
 
-[![macOS](https://img.shields.io/badge/macOS-12%2B-blue?logo=apple)](https://www.apple.com/macos/)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)](https://python.org)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.0.0-purple)](CHANGELOG.md)
-
----
-
-## ✨ What It Does
-
-SourceStream recursively compresses your developer folders (e.g. `~/Developer`) while **automatically excluding** all build artifacts, caches, and package directories that can be restored:
-
-| Excluded (saves 60–90% size) | Kept (your real work) |
-|---|---|
-| `node_modules/`, `vendor/`, `bower_components/` | Source code |
-| `.gradle/caches/`, `build/intermediates/` | Config files |
-| `storage/framework/`, `Library/Caches/` | Git history |
-| `*.tar.gz`, `*.zip` | Database seeds |
-| `.git/objects/pack`, `*.ipc` | Documentation |
-
-**Result:** A `~20 GB` developer folder typically archives to `~9 GB` (~55% reduction before cache exclusions).
+[![Version](https://img.shields.io/badge/version-1.0.8-blue)](CHANGELOG.md)
+[![macOS](https://img.shields.io/badge/macOS-12%2B-lightgrey)](https://www.apple.com/macos/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
 
-## 🏗 Architecture
+## Overview
 
-```
-SourceStream.app/Contents/
-├── MacOS/
-│   └── SourceStream           ← Launcher: starts server, opens Chrome dashboard
-├── Resources/
-│   ├── backup_engine.sh       ← Core tar/gzip compression engine (Bash)
-│   ├── server.py              ← REST API server (port 7474, localhost only)
-│   └── app.html               ← Web dashboard SPA (dark theme, 7 pages)
-└── Library/LaunchAgents/
-    └── com.sourcestream.server.plist   ← LaunchAgent template
+SourceStream is a lightweight, fully self-contained macOS backup application.
+It runs as a **LaunchAgent** (no Dock icon required), exposes a **local REST
+API** at `http://127.0.0.1:7474`, and serves a single-page **dashboard** you
+open in any browser. A native **menu bar agent** shows live status and lets you
+trigger backups from the menu bar.
 
-User data (preserved across app updates):
-~/.sourcestream/
-├── config/
-│   └── sourcestream.conf      ← INI config: sources, destinations, settings
-├── logs/
-│   ├── backup.log             ← Backup engine output
-│   ├── error.log              ← Errors and bsdtar warnings
-│   └── server.log             ← Dashboard server log
-└── status.json                ← Live backup status (polled by dashboard)
-```
+Backups are **tar.gz** or **zip** archives written to one or more local or
+network destinations, with optional **upload to S3 / Backblaze B2 / rclone**
+after each run.
 
 ---
 
-## 📦 Installation
+## Features
 
-### Option A — DMG Installer (recommended)
+| Feature | Since |
+|---------|-------|
+| Local backup to multiple destinations | 1.0.0 |
+| Google Drive auto-detect | 1.0.2 |
+| Per-source & global excludes | 1.0.5 |
+| Per-source retention (keep N archives) | 1.0.5 |
+| Archive format: tar.gz / zip / both | 1.0.5 |
+| Schedule (cron / launchd) | 1.0.3 |
+| Dry-run mode | 1.0.3 |
+| App icon + light/dark theme | 1.0.7 |
+| Notification & verify-after-backup toggles | 1.0.7 |
+| **Menu bar agent** (NSStatusBar) | **1.0.8** |
+| **Incremental backup** (mtime-sentinel) | **1.0.8** |
+| **Remote destinations** (S3 / B2 / rclone) | **1.0.8** |
 
-1. Download `SourceStream-1.0.0.dmg` from [Releases](../../releases)
-2. Open the DMG
-3. Drag **SourceStream.app** → **Applications**
-4. Double-click `SourceStream` from Applications or Spotlight
-5. The dashboard opens in Chrome automatically at `http://127.0.0.1:7474/`
+---
 
-### Option B — Build from Source
+## Requirements
+
+- macOS 12 Monterey or later
+- Python 3.9+ (bundled with macOS)
+- `bsdtar` (bundled with macOS via libarchive)
+- **Menu bar agent only:** `pip3 install pyobjc-framework-Cocoa`
+- **Remote S3:** `brew install awscli && aws configure`
+- **Remote B2:** `brew install b2-tools && b2 authorize-account`
+- **Remote rclone:** `brew install rclone && rclone config`
+
+---
+
+## Installation
+
+### From DMG (recommended)
 
 ```bash
-git clone https://github.com/yourusername/SourceStream.git
-cd SourceStream
-bash build/build_dmg.sh       # → dist/SourceStream-1.0.0.dmg
+# Download SourceStream-1.0.8.dmg, then:
+open SourceStream-1.0.8.dmg
+# Drag SourceStream.app to /Applications, then:
+bash /Applications/SourceStream.app/Contents/Resources/../../../install.sh
 ```
 
-**Requirements:**
-- macOS 12 Monterey or later
-- Python 3.9+ (`/opt/homebrew/bin/python3` or `/usr/bin/python3`)
-- Google Chrome (dashboard opens in app-mode)
-- Google Drive desktop app (for direct-to-drive streaming)
+### From source
 
----
+```bash
+git clone https://github.com/yourname/SourceStream.git
+cd SourceStream
+bash build/install.sh
+```
 
-## 🚀 Usage
+`install.sh` will:
+1. Copy `SourceStream.app` to `/Applications`
+2. Install and load `com.sourcestream.server.plist` LaunchAgent (auto-start at login)
+3. Install `com.sourcestream.menubar.plist` LaunchAgent (if PyObjC available)
+4. Migrate existing config keys
+5. Compile the Desktop launcher
+6. Run health check at `http://127.0.0.1:7474/api/health`
 
 ### Open Dashboard
-Double-click `SourceStream.app` → opens the live web dashboard
 
-| Page | Purpose |
-|------|---------|
-| 📊 Dashboard | Live status, last run time, archive list, activity log |
-| 🚀 Run Backup | Manual trigger with real-time progress bar |
-| 🗄 Archives | Browse all archives: name, size, age, destination |
-| 📋 Logs | Full output log and error log viewer |
-| 🏥 Health Check | Verify drive mount, cron, permissions, free space |
-| ⏰ Schedule | Set weekly/daily automated backup schedule |
-| ⚙️ Settings | Add/remove source folders and destinations |
-
-### Manual CLI Trigger
-
-```bash
-/Applications/SourceStream.app/Contents/Resources/backup_engine.sh
+```
+open http://127.0.0.1:7474
 ```
 
-### Configuration File (`~/.sourcestream/config/sourcestream.conf`)
+Or click the **⚡ SourceStream** menu bar icon → **Open Dashboard**.
+
+---
+
+## Configuration
+
+Config is stored at `~/.sourcestream/config/sourcestream.conf` — **never** inside
+the app bundle. It is an INI-style file managed entirely through the dashboard.
+
+### Example config
 
 ```ini
 [settings]
-DIRECT_TO_DRIVE=true        # 1× SSD usage — streams tar directly to Drive
-MAX_ARCHIVES_TO_KEEP=3      # Retention count (0 = keep forever)
+MAX_ARCHIVES=10
+ARCHIVE_FORMAT=tar
+BACKUP_MODE=incremental
+NOTIFY=true
+VERIFY_AFTER_BACKUP=true
 
 [sources]
-/Users/masud/Developer|Developer    # /full/path|Display Label
+/Users/alice/Documents|Documents|5
+/Users/alice/Projects|Projects
 
 [destinations]
-/path/to/Google Drive/Developer Backups|Google Drive
+/Volumes/MyDrive/Backups
+/Users/alice/Library/Mobile Documents/com~apple~CloudDocs/Backups
+
+[excludes]
+node_modules
+.git
+__pycache__
+.DS_Store
+
+[source_excludes]
+Documents = Downloads, Trash
+Projects = node_modules, dist, .next
+
+[remote_destinations]
+s3://my-bucket/sourcestream|AWS S3
+rclone:gdrive:Backups|Google Drive (rclone)
 ```
+
+### Source entry format
+
+`path|label|retention` — `label` and `retention` are optional.
+
+```
+/Users/alice/Documents|Documents|5
+```
+
+Keeps 5 archives for this source (overrides global `MAX_ARCHIVES`).
 
 ---
 
-## ⚙️ How It Works
+## Backup Modes
 
-### Compression Strategy
+### Full backup (default)
 
-```
-Direct mode (DIRECT_TO_DRIVE=true + single destination):
-  Source ──► tar/gzip ──► Drive mount path
-  SSD peak: ~0 bytes  ✅  (streams directly — no local copy)
+Every run archives **all files** in each source directory.
 
-Staging mode (multiple destinations OR DIRECT_TO_DRIVE=false):
-  Source ──► tar/gzip ──► /tmp ──► copy to each destination ──► rm /tmp
-  SSD peak: 1× compressed archive size
+```ini
+BACKUP_MODE=full
 ```
 
-### macOS bsdtar — Key Flags
+### Incremental backup
+
+Only files **changed since the last run** are archived. Uses `--newer-mtime`
+for tar and `find -newer` for zip. Skips the run entirely if nothing changed.
+
+```ini
+BACKUP_MODE=incremental
+```
+
+Manifests (last-backup sentinel files) are stored in `~/.sourcestream/manifests/`.
+
+**Reset a manifest** (force full run next time):
 
 ```bash
-tar \
-  --exclude="node_modules" \  # ← all --exclude flags MUST come before -czf
-  --format=gnutar \           # ← avoids pax format; pax can't archive sockets
-  --no-xattrs \               # ← skips macOS extended attributes
-  -czf archive.tar.gz \
-  source/
+curl -X POST http://127.0.0.1:7474/api/incremental/reset \
+  -H "Content-Type: application/json" -d '{"label":"Documents"}'
 ```
 
-### Archive Naming Convention
-
-```
-{Label}_Backup_{YYYYMMDD_HHMMSS}.tar.gz
-# e.g. Developer_Backup_20261109_230001.tar.gz
-```
-
-Each run creates a **new timestamped archive**. Previous archives are retained up to `MAX_ARCHIVES_TO_KEEP`, then oldest are pruned automatically.
-
-### Progress Tracking
-
-The dashboard polls `/api/progress` every 2 seconds while a backup runs:
-1. **Primary:** reads `os.path.getsize()` on the live growing `.tar.gz` file
-2. **Fallback:** estimates from elapsed time vs. ~200 MB/min compressed throughput
+Or use the **Reset** button on the dashboard Incremental panel.
 
 ---
 
-## 🔒 Security
+## Remote Destinations
 
-- Server binds to `127.0.0.1:7474` only — **never exposed to your local network**
-- No telemetry, no external network calls
-- Config and logs in `~/.sourcestream/` — your data, your machine only
-- `LSUIElement = YES` in `Info.plist` — no Dock icon, no visible app window
+After every successful local backup, SourceStream can upload the archive to
+cloud storage. Supported schemes:
 
----
+| Scheme | CLI | Setup |
+|--------|-----|-------|
+| `s3://bucket/path` | `aws` | `brew install awscli` → `aws configure` |
+| `b2://bucket/path` | `b2` | `brew install b2-tools` → `b2 authorize-account` |
+| `rclone:remote:path` | `rclone` | `brew install rclone` → `rclone config` |
 
-## 🗑 Uninstall
+### Add via dashboard
 
-**Complete removal:**
-```bash
-bash "/Applications/SourceStream.app/Contents/build/Uninstall SourceStream.sh"
-```
+Go to **☁️ Remote Dests** → enter URI and label → **Add Destination**.
 
-This removes:
-- `/Applications/SourceStream.app`
-- `~/Library/LaunchAgents/com.sourcestream.server.plist`
-- Cron entry for `backup_engine.sh`
-- Optionally: `~/.sourcestream/` (config + logs — you are prompted)
-
----
-
-## 🛠 Development
-
-### Project Structure
-
-```
-SourceStream/
-├── SourceStream.app/           ← Native macOS app bundle
-│   └── Contents/
-│       ├── Info.plist          ← Bundle identity, LSUIElement
-│       ├── MacOS/
-│       │   └── SourceStream    ← Launcher (Bash stub)
-│       ├── Resources/
-│       │   ├── app.html        ← Dashboard SPA
-│       │   ├── server.py       ← REST API (Python 3)
-│       │   └── backup_engine.sh← Backup engine (Bash)
-│       └── Library/LaunchAgents/
-│           └── com.sourcestream.server.plist
-├── build/
-│   ├── build_dmg.sh            ← Automated DMG builder
-│   └── Uninstall SourceStream.sh
-├── dist/                       ← Built output (gitignored)
-├── CHANGELOG.md
-├── LICENSE
-└── README.md
-```
-
-### Commands
+### Add via API
 
 ```bash
-# Syntax checks
-python3 -m py_compile SourceStream.app/Contents/Resources/server.py
-bash -n SourceStream.app/Contents/Resources/backup_engine.sh
+curl -X POST http://127.0.0.1:7474/api/remote-dests/add \
+  -H "Content-Type: application/json" \
+  -d '{"uri":"s3://my-bucket/backups","label":"My S3"}'
+```
 
-# Start dev server
-cd SourceStream.app/Contents/Resources && python3 server.py
+### Test CLI availability
 
-# Build DMG
+```bash
+curl -X POST http://127.0.0.1:7474/api/remote-dests/test \
+  -H "Content-Type: application/json" -d '{"scheme":"s3"}'
+```
+
+---
+
+## Menu Bar Agent
+
+The menu bar agent (`menubar_agent.py`) runs as a separate LaunchAgent
+(`com.sourcestream.menubar.plist`) and shows live backup status in the macOS
+menu bar.
+
+**Icons:**
+| Icon | Meaning |
+|------|---------|
+| ⚡ | Idle / ready |
+| ⏳ | Backup running |
+| ✅ | Last backup succeeded |
+| ⚠️ | Last backup had warnings |
+| 🔌 | Server offline |
+
+**Menu items:** Run Backup · Cancel · Open Dashboard · Quit
+
+### Install PyObjC
+
+```bash
+pip3 install pyobjc-framework-Cocoa
+# Then restart the menu bar agent:
+launchctl unload ~/Library/LaunchAgents/com.sourcestream.menubar.plist
+launchctl load ~/Library/LaunchAgents/com.sourcestream.menubar.plist
+```
+
+---
+
+## REST API
+
+Base URL: `http://127.0.0.1:7474`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | App version, uptime |
+| GET | `/api/status` | Current backup status |
+| GET | `/api/config` | Full config (settings, sources, dests, excludes, remote_destinations) |
+| POST | `/api/config` | Save config |
+| POST | `/api/backup/start` | Start a backup run |
+| POST | `/api/backup/cancel` | Cancel running backup |
+| GET | `/api/dry-run` | Count changed files without archiving |
+| GET | `/api/archives` | List archives per destination |
+| POST | `/api/archives/delete` | Delete an archive |
+| GET | `/api/logs` | Last 200 lines of backup.log |
+| GET | `/api/incremental/status` | Per-source manifest info |
+| POST | `/api/incremental/reset` | Reset manifests (all or by label) |
+| GET | `/api/remote-dests` | List remote destinations |
+| POST | `/api/remote-dests/add` | Add remote destination |
+| POST | `/api/remote-dests/remove` | Remove remote destination |
+| POST | `/api/remote-dests/test` | Test CLI for scheme (s3/b2/rclone) |
+
+---
+
+## Architecture
+
+```
+SourceStream.app/
+├── Contents/
+│   ├── Info.plist                           # CFBundleVersion = 1.0.8
+│   ├── MacOS/
+│   │   └── SourceStream                     # Launcher shell script
+│   ├── Library/
+│   │   └── LaunchAgents/
+│   │       ├── com.sourcestream.server.plist
+│   │       └── com.sourcestream.menubar.plist
+│   └── Resources/
+│       ├── server.py          # HTTP server — 127.0.0.1:7474
+│       ├── app.html           # Single-page dashboard (10 pages)
+│       ├── backup_engine.sh   # Backup logic (bsdtar + zip)
+│       ├── menubar_agent.py   # NSStatusBar agent (PyObjC)
+│       └── AppIcon.icns
+
+~/.sourcestream/
+├── config/
+│   └── sourcestream.conf      # User config (INI)
+├── logs/
+│   ├── backup.log
+│   ├── server.log
+│   └── menubar.log
+├── manifests/
+│   ├── Documents.manifest     # Last-backup timestamp
+│   ├── Documents.mtime        # Sentinel file for --newer-mtime
+│   └── ...
+└── status.json                # Live backup progress
+```
+
+---
+
+## Build DMG
+
+```bash
+cd /path/to/SourceStream
 bash build/build_dmg.sh
+# Output: dist/SourceStream-1.0.8.dmg
 ```
 
-### Git Branching Strategy
+---
 
-| Branch | Purpose |
-|--------|---------|
-| `main` | Stable tagged releases |
-| `develop` | Integration — merges feature branches here first |
-| `feature/*` | New features (branch from `develop`) |
-| `fix/*` | Bug fixes (branch from `develop` or `main`) |
-| `release/*` | Release candidates (branch from `develop`) |
+## Uninstall
 
 ```bash
-# Start a new feature
-git checkout develop
-git checkout -b feature/my-feature
-
-# Merge back when done
-git checkout develop
-git merge --no-ff feature/my-feature
+bash "/Applications/SourceStream.app/Contents/Resources/../../../Uninstall SourceStream.sh"
 ```
 
----
-
-## 📋 Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for the full history.
+This stops and removes both LaunchAgents, removes `/Applications/SourceStream.app`,
+and optionally removes `~/.sourcestream/` user data.
 
 ---
 
-## 📄 License
+## Key Constraints
 
-MIT © 2026 [Md. Masud Uz Zaman](https://github.com/mzaman)
+- Port is always `127.0.0.1:7474` — never `0.0.0.0`
+- Config is always `~/.sourcestream/config/sourcestream.conf` — never inside bundle
+- bsdtar: `--exclude` flags placed **before** `-czf` (bsdtar requirement)
+- `COPYFILE_DISABLE=1` always exported before `tar` calls
+- `--format=gnutar --no-xattrs` to avoid macOS extended attribute errors
+- tar exit code 1 = WARN (files changed during archiving is normal)
+- Bash 3.2 compatible (no `readarray`, no `declare -A`)
 
+---
+
+## License
+
+MIT © 2026 Masud Uz Zaman. See [LICENSE](LICENSE).
