@@ -575,6 +575,138 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 remotes.append({"uri": uri, "label": label, "scheme": scheme})
             return self.jsend({"ok": True, "remotes": remotes})
 
+
+        if p == "/api/source-sizes":
+            """Return disk size (du -sh) for each configured source folder."""
+            _, src_entries, _, _, _, _ = parse_conf()
+            results = []
+            for entry in src_entries:
+                parts    = entry.split("|")
+                src_path = parts[0].strip()
+                label    = parts[1].strip() if len(parts) > 1 else src_path
+                p_obj    = Path(src_path)
+                try:
+                    out  = sh(["du", "-sk", src_path]).stdout.strip()
+                    kb   = int(out.split()[0]) if out else 0
+                    mb   = round(kb / 1024, 1)
+                    gb   = round(kb / 1048576, 2)
+                    size_str = f"{gb} GB" if gb >= 1 else f"{mb} MB"
+                    results.append({
+                        "label":     label,
+                        "path":      src_path,
+                        "exists":    p_obj.is_dir(),
+                        "size_mb":   mb,
+                        "size_gb":   gb,
+                        "size_str":  size_str,
+                    })
+                except Exception:
+                    results.append({"label": label, "path": src_path,
+                                    "exists": p_obj.is_dir(), "size_mb": 0,
+                                    "size_gb": 0, "size_str": "?"})
+            total_mb = sum(r["size_mb"] for r in results)
+            total_gb = round(total_mb / 1024, 2)
+            return self.jsend({
+                "ok": True,
+                "sources": results,
+                "total_str": f"{total_gb} GB" if total_gb >= 1 else f"{round(total_mb,1)} MB",
+            })
+
+        if p == "/api/next-run":
+            """Return next scheduled backup time from launchd plist or cron."""
+            import datetime, subprocess, re as _re
+            result = {"source": None, "next": None, "schedule_str": None}
+            # 1. Try launchd StartCalendarInterval
+            plist_path = Path.home() / "Library/LaunchAgents/com.sourcestream.server.plist"
+            try:
+                txt = plist_path.read_text() if plist_path.exists() else ""
+                # Look for StartCalendarInterval Hour/Minute in plist
+                hour_m   = _re.search(r"<key>Hour</key>\s*<integer>(\d+)</integer>", txt)
+                minute_m = _re.search(r"<key>Minute</key>\s*<integer>(\d+)</integer>", txt)
+                if hour_m and minute_m:
+                    h, m = int(hour_m.group(1)), int(minute_m.group(1))
+                    now  = datetime.datetime.now()
+                    nxt  = now.replace(hour=h, minute=m, second=0, microsecond=0)
+                    if nxt <= now:
+                        nxt += datetime.timedelta(days=1)
+                    diff = nxt - now
+                    hh, rem = divmod(int(diff.total_seconds()), 3600)
+                    mm = rem // 60
+                    result = {
+                        "source":       "launchd",
+                        "next":         nxt.strftime("%Y-%m-%d %H:%M"),
+                        "schedule_str": f"Daily at {h:02d}:{m:02d}",
+                        "in_hours":     hh,
+                        "in_minutes":   mm,
+                        "countdown":    f"{hh}h {mm}m" if hh else f"{mm}m",
+                    }
+                    return self.jsend(result)
+            except Exception:
+                pass
+            # 2. Fall back to crontab
+            try:
+                cl = subprocess.run(["crontab", "-l"], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True).stdout
+                entry = next(
+                    (l for l in cl.splitlines() if "backup_engine" in l or "sourcestream" in l), "")
+                if entry:
+                    fields = entry.split()
+                    cron_min  = fields[0] if fields[0] != "*" else "0"
+                    cron_hour = fields[1] if len(fields) > 1 and fields[1] != "*" else None
+                    if cron_hour and cron_min.isdigit() and cron_hour.isdigit():
+                        h, m = int(cron_hour), int(cron_min)
+                        now  = datetime.datetime.now()
+                        nxt  = now.replace(hour=h, minute=m, second=0, microsecond=0)
+                        if nxt <= now:
+                            nxt += datetime.timedelta(days=1)
+                        diff = nxt - now
+                        hh, rem = divmod(int(diff.total_seconds()), 3600)
+                        mm = rem // 60
+                        result = {
+                            "source":       "cron",
+                            "next":         nxt.strftime("%Y-%m-%d %H:%M"),
+                            "schedule_str": f"Cron: {entry.split(None, 5)[0:5]}",
+                            "in_hours":     hh,
+                            "in_minutes":   mm,
+                            "countdown":    f"{hh}h {mm}m" if hh else f"{mm}m",
+                        }
+                        return self.jsend(result)
+            except Exception:
+                pass
+            return self.jsend({"ok": True, "source": None, "next": None,
+                                "countdown": None, "schedule_str": "No schedule set"})
+
+        if p == "/api/archive-trend":
+            """Return per-day total archive size across all destinations for trending."""
+            import datetime, re as _re
+            _, _src, dsts, _exc, _src_exc, _ = parse_conf()
+            dest_paths = [d.split("|")[0] for d in dsts] if dsts else [str(GDRIVE)]
+            # Collect all archives with their size + date
+            day_sizes = {}   # "YYYY-MM-DD" → total bytes
+            for dest_path in dest_paths:
+                dest = Path(dest_path)
+                if not dest.is_dir():
+                    continue
+                for f in dest.iterdir():
+                    if f.suffix in (".gz", ".zip") and f.stat().st_size > 0:
+                        try:
+                            # Try to parse date from filename YYYYMMDD_HHMMSS
+                            m = _re.search(r"(\d{8})_\d{6}", f.name)
+                            if m:
+                                d = m.group(1)
+                                day = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+                            else:
+                                day = datetime.datetime.fromtimestamp(
+                                    f.stat().st_mtime).strftime("%Y-%m-%d")
+                            day_sizes[day] = day_sizes.get(day, 0) + f.stat().st_size
+                        except Exception:
+                            pass
+            # Sort and return last 30 days
+            trend = sorted(
+                [{"date": k, "size_mb": round(v / 1048576, 1)} for k, v in day_sizes.items()],
+                key=lambda x: x["date"]
+            )[-30:]
+            return self.jsend({"ok": True, "trend": trend})
+
         # Static fallback
         fp = APP_RES / p.lstrip("/")
         if fp.exists() and fp.is_file(): return self.fsend(fp)
