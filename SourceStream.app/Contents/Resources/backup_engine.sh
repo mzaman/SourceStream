@@ -46,6 +46,7 @@ ARCHIVE_PREFIX="{label}"     # archive name template: {label}, {hostname}, {date
 HOSTNAME_IN_NAME="false"
 SOURCE_ENTRIES=()
 DEST_ENTRIES=()
+REMOTE_DEST_ENTRIES=()     # s3://bucket/path|Label  or  b2://bucket/path|Label
 CUSTOM_EXCLUDES=()
 SOURCE_EXCL_LINES=()       # per-source excludes: "path:pattern" entries
 CURRENT_EXCL_SRC=""        # active source path while parsing [excludes:/path] sections
@@ -146,6 +147,7 @@ load_config() {
                 ;;
             sources)        [[ "$trimmed" == *"|"* ]] && SOURCE_ENTRIES+=("$trimmed") ;;
             destinations)   [[ "$trimmed" == *"|"* ]] && DEST_ENTRIES+=("$trimmed") ;;
+            remote_destinations) [[ "$trimmed" == *"|"* ]] && REMOTE_DEST_ENTRIES+=("$trimmed") ;;
             excludes)       [[ -n "$trimmed" ]] && CUSTOM_EXCLUDES+=("$trimmed") ;;
             source_excludes)
                 [[ -n "$trimmed" && -n "$CURRENT_EXCL_SRC" ]] &&                     SOURCE_EXCL_LINES+=("${CURRENT_EXCL_SRC}:${trimmed}") ;;
@@ -259,6 +261,94 @@ verify_archive() {
         *.zip)     unzip -t  "$ARCH" > /dev/null 2>&1 ;;
         *)         tar -tzf  "$ARCH" > /dev/null 2>&1 ;;
     esac
+}
+
+# ==============================================================================
+# FUNCTION: upload_to_remote
+# Uploads a local archive file to a remote destination (S3 or B2).
+#
+# Remote destination entry format: <scheme>://<bucket>/<prefix>|<Label>
+#   e.g.  s3://my-backup-bucket/sourcestream|AWS S3
+#         b2://my-bucket/sourcestream|Backblaze B2
+#         rclone:remote:path|Rclone
+#
+# CLIs used (must be installed separately by the user):
+#   - s3://  → aws s3 cp   (aws-cli: brew install awscli)
+#   - b2://  → b2 file upload-file  (b2-tools: brew install b2-tools)
+#   - rclone:→ rclone copy   (brew install rclone)
+#
+# Returns 0 on success, 1 on error (never aborts whole backup).
+# ==============================================================================
+upload_to_remote() {
+    local LOCAL_ARCHIVE="$1"
+    local REMOTE_URI="$2"      # s3://bucket/prefix  |  b2://bucket/prefix  |  rclone:remote:path
+    local REMOTE_LABEL="$3"
+    local FNAME
+    FNAME=$(basename "$LOCAL_ARCHIVE")
+
+    log_msg "INFO" "☁️  Uploading to $REMOTE_LABEL..."
+    log_msg "INFO" "   Local:  $LOCAL_ARCHIVE"
+    log_msg "INFO" "   Remote: ${REMOTE_URI}/${FNAME}"
+
+    case "$REMOTE_URI" in
+        s3://*)
+            if ! command -v aws &>/dev/null; then
+                log_err "AWS CLI not found — cannot upload to $REMOTE_LABEL. Install: brew install awscli"
+                return 1
+            fi
+            aws s3 cp "$LOCAL_ARCHIVE" "${REMOTE_URI}/${FNAME}" \
+                --no-progress 2>>"$ERROR_LOG"
+            local EXIT=$?
+            if [ "$EXIT" -eq 0 ]; then
+                log_msg "SUCCESS" "   ✅ Uploaded to $REMOTE_LABEL: ${REMOTE_URI}/${FNAME}"
+            else
+                log_err "   ❌ Upload to $REMOTE_LABEL failed (exit $EXIT). Check $ERROR_LOG"
+                return 1
+            fi
+            ;;
+        b2://*)
+            if ! command -v b2 &>/dev/null; then
+                log_err "B2 CLI not found — cannot upload to $REMOTE_LABEL. Install: brew install b2-tools"
+                return 1
+            fi
+            # b2 upload: b2 file upload-file <bucket> <localFile> <remoteName>
+            # Extract bucket name: b2://bucket/prefix → bucket
+            local B2_BUCKET; B2_BUCKET="${REMOTE_URI#b2://}"; B2_BUCKET="${B2_BUCKET%%/*}"
+            local B2_PREFIX; B2_PREFIX="${REMOTE_URI#b2://${B2_BUCKET}}"; B2_PREFIX="${B2_PREFIX#/}"
+            local B2_REMOTE_NAME="${B2_PREFIX:+${B2_PREFIX}/}${FNAME}"
+            b2 file upload-file "$B2_BUCKET" "$LOCAL_ARCHIVE" "$B2_REMOTE_NAME" \
+                2>>"$ERROR_LOG" >/dev/null
+            local EXIT=$?
+            if [ "$EXIT" -eq 0 ]; then
+                log_msg "SUCCESS" "   ✅ Uploaded to $REMOTE_LABEL: b2://${B2_BUCKET}/${B2_REMOTE_NAME}"
+            else
+                log_err "   ❌ B2 upload to $REMOTE_LABEL failed (exit $EXIT). Check $ERROR_LOG"
+                return 1
+            fi
+            ;;
+        rclone:*)
+            if ! command -v rclone &>/dev/null; then
+                log_err "rclone not found — cannot upload to $REMOTE_LABEL. Install: brew install rclone"
+                return 1
+            fi
+            # rclone:remote:path → rclone copy localFile remote:path
+            local RCLONE_DEST="${REMOTE_URI#rclone:}"
+            rclone copy "$LOCAL_ARCHIVE" "$RCLONE_DEST" \
+                --progress=false 2>>"$ERROR_LOG"
+            local EXIT=$?
+            if [ "$EXIT" -eq 0 ]; then
+                log_msg "SUCCESS" "   ✅ Uploaded via rclone to $REMOTE_LABEL: $RCLONE_DEST/$FNAME"
+            else
+                log_err "   ❌ rclone upload to $REMOTE_LABEL failed (exit $EXIT). Check $ERROR_LOG"
+                return 1
+            fi
+            ;;
+        *)
+            log_err "Unknown remote scheme in '$REMOTE_URI' — supported: s3://, b2://, rclone:"
+            return 1
+            ;;
+    esac
+    return 0
 }
 
 # ── Exit trap — remove partial archives if engine crashes mid-backup ─────────────
@@ -646,6 +736,28 @@ process_backup() {
             log_msg "INFO" "🧹 Staging copy purged from /tmp."
         else
             log_msg "WARN" "⚠️  Staging copy retained at $STAGE_PATH for manual recovery."
+        fi
+    fi
+
+    # ── Upload to remote destinations (S3 / B2 / rclone) ─────────────────────
+    # Always upload the final archive — from primary dest path if direct, else stage.
+    if [ "${#REMOTE_DEST_ENTRIES[@]}" -gt 0 ]; then
+        local UPLOAD_SRC
+        # If STAGE_PATH was purged (direct mode), use primary dest copy
+        if [ "$DIRECT_TO_DRIVE" = "true" ] && [ -n "$PRIMARY_DEST_PATH" ]; then
+            UPLOAD_SRC="$PRIMARY_DEST_PATH/$TAR_NAME"
+        else
+            UPLOAD_SRC="$STAGE_PATH"
+        fi
+        if [ -f "$UPLOAD_SRC" ]; then
+            for REMOTE_ENTRY in "${REMOTE_DEST_ENTRIES[@]}"; do
+                local REMOTE_URI="${REMOTE_ENTRY%%|*}"
+                local REMOTE_LABEL="${REMOTE_ENTRY##*|}"
+                upload_to_remote "$UPLOAD_SRC" "$REMOTE_URI" "$REMOTE_LABEL" || \
+                    log_msg "WARN" "   Remote upload to $REMOTE_LABEL failed — local backup still intact."
+            done
+        else
+            log_msg "WARN" "   ⚠️  Remote upload skipped — archive not found at $UPLOAD_SRC"
         fi
     fi
 

@@ -72,6 +72,7 @@ def parse_conf():
     settings = dict(DEFAULT_SETTINGS)
     sources, dests, excludes = [], [], []
     source_excludes = {}   # {src_path: [patterns]}
+    remote_dests = []      # ["s3://bucket/prefix|Label", ...]
     section = ""
     current_excl_src = ""  # used when section == "source_excludes"
     try:
@@ -98,19 +99,23 @@ def parse_conf():
                 dests.append(line)
             elif section == "excludes" and line:
                 excludes.append(line)
+            elif section == "remote_destinations" and line:
+                if "|" in line:
+                    remote_dests.append(line)
             elif section == "source_excludes" and line and current_excl_src:
                 if current_excl_src not in source_excludes:
                     source_excludes[current_excl_src] = []
                 source_excludes[current_excl_src].append(line)
     except Exception:
         pass
-    return settings, sources, dests, excludes, source_excludes
+    return settings, sources, dests, excludes, source_excludes, remote_dests
 
 
-def write_conf(settings, sources, dests, excludes=None, source_excludes=None):
+def write_conf(settings, sources, dests, excludes=None, source_excludes=None, remote_dests=None):
     """Write config to disk.
 
     source_excludes: dict {"/path": ["pattern1", ...]}  — written as [excludes:/path] sections.
+    remote_dests: list ["s3://bucket/prefix|Label", ...]  — written as [remote_destinations].
     """
     CONF.parent.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -128,6 +133,9 @@ def write_conf(settings, sources, dests, excludes=None, source_excludes=None):
         for src_path, patterns in source_excludes.items():
             if patterns:
                 lines += ["", f"[excludes:{src_path}]", *patterns]
+    # Write remote destinations section
+    if remote_dests:
+        lines += ["", "[remote_destinations]", *remote_dests]
     lines.append("")
     CONF.write_text("\n".join(lines))
 
@@ -216,7 +224,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p == "/api/health":
             c = {}
             c["script"]     = os.access(str(SCRIPT), os.X_OK)
-            _, _src, _dst, _exc, _src_exc = parse_conf()
+            _, _src, _dst, _exc, _src_exc, _ = parse_conf()
             drive_path = Path(_dst[0].split("|")[0]) if _dst else GDRIVE
             c["drive"]      = drive_path.is_dir()
             try:
@@ -254,11 +262,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.jsend(c)
 
         if p == "/api/config":
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, rem = parse_conf()
             return self.jsend({
                 "settings": s, "sources": src, "destinations": dst,
                 "excludes": exc,
                 "source_excludes": src_exc,
+                "remote_destinations": rem,
                 "config_path": str(CONF),
                 "logs_path": str(LOGS_DIR),
                 "app_version": APP_VERSION,
@@ -324,7 +333,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/analyze":
             res = {}
-            s, src, dst_entries, _exc, _src_exc = parse_conf()
+            s, src, dst_entries, _exc, _src_exc, _ = parse_conf()
             sources = [e.split("|")[0] for e in src] or [str(Path.home() / "Developer")]
             drive_path_analyze = Path(dst_entries[0].split("|")[0]) if dst_entries else GDRIVE
             try:
@@ -367,7 +376,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/archives":
             archs = []
-            _, _src, dsts, _exc, _src_exc = parse_conf()
+            _, _src, dsts, _exc, _src_exc, _ = parse_conf()
             dest_list = [(d.split("|")[0], d.split("|")[1] if "|" in d else "Drive") for d in dsts] \
                         if dsts else [(str(GDRIVE), "Google Drive")]
             try:
@@ -460,7 +469,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 }
             except Exception:
                 res["ssd"] = {}
-            _, _src, dsts, _exc, _src_exc = parse_conf()
+            _, _src, dsts, _exc, _src_exc, _ = parse_conf()
             dest_list = [(d.split("|")[0], d.split("|")[1] if "|" in d else "Drive") for d in dsts] \
                         if dsts else [(str(GDRIVE), "Google Drive")]
             drives = []
@@ -590,7 +599,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             arch_path = body.get("path", "").strip()
             p_obj = Path(arch_path)
             # Safety: only allow deleting files inside configured destination dirs
-            s2, src2, dst2, exc2, src_exc2 = parse_conf()
+            s2, src2, dst2, exc2, src_exc2, _ = parse_conf()
             allowed_roots = [Path(e.split("|")[0]) for e in dst2 if "|" in e]
             if not arch_path or not p_obj.exists():
                 return self.jsend({"ok": False, "error": "File not found"})
@@ -628,7 +637,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.jsend({"ok": False, "error": str(e)})
 
         if p == "/api/config":
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             new_s = body.get("settings", {})
             s.update(new_s)
             # Merge source_excludes from body if provided
@@ -639,14 +648,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.jsend({"ok": True})
 
         if p == "/api/sources/add":
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             e = body.get("entry", "").strip()
             if e and "|" in e and e not in src:
                 src.append(e); write_conf(s, src, dst, exc, src_exc)
             return self.jsend({"ok": True})
 
         if p == "/api/sources/remove":
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             pv  = body.get("path", "")
             src = [x for x in src if not x.startswith(pv + "|")]
             write_conf(s, src, dst, exc, src_exc)
@@ -654,7 +663,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/sources/update":
             # Replace one source entry: {"old_path": "/old", "new_entry": "/new|Label|keep=5"}
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             old_path  = body.get("old_path", "").strip()
             new_entry = body.get("new_entry", "").strip()
             if old_path and new_entry:
@@ -663,14 +672,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.jsend({"ok": True})
 
         if p == "/api/destinations/add":
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             e = body.get("entry", "").strip()
             if e and "|" in e and e not in dst:
                 dst.append(e); write_conf(s, src, dst, exc, src_exc)
             return self.jsend({"ok": True})
 
         if p == "/api/destinations/remove":
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             if len(dst) <= 1:
                 return self.jsend({"ok": False, "error": "Cannot remove last destination"})
             pv  = body.get("path", "")
@@ -679,14 +688,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.jsend({"ok": True})
 
         if p == "/api/excludes/add":
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             pattern = body.get("pattern", "").strip()
             if pattern and pattern not in exc:
                 exc.append(pattern); write_conf(s, src, dst, exc, src_exc)
             return self.jsend({"ok": True})
 
         if p == "/api/excludes/remove":
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             pattern = body.get("pattern", "").strip()
             exc = [x for x in exc if x != pattern]
             write_conf(s, src, dst, exc, src_exc)
@@ -694,7 +703,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/excludes/add-bulk":
             # Body: {"patterns": ["p1", "p2", "p3"]}
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             patterns = body.get("patterns", [])
             added = 0
             for pat in patterns:
@@ -708,7 +717,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p == "/api/source-excludes/set":
             # Body: {"source_path": "/path", "patterns": ["p1", "p2"]}
             # Replaces ALL per-source excludes for that path
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             src_path = body.get("source_path", "").strip()
             patterns = [p.strip() for p in body.get("patterns", []) if isinstance(p, str) and p.strip()]
             if src_path:
@@ -718,7 +727,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/source-excludes/add":
             # Body: {"source_path": "/path", "pattern": "p1"}
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             src_path = body.get("source_path", "").strip()
             pattern  = body.get("pattern", "").strip()
             if src_path and pattern:
@@ -731,7 +740,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/source-excludes/add-bulk":
             # Body: {"source_path": "/path", "patterns": ["p1", "p2"]}
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             src_path = body.get("source_path", "").strip()
             patterns = body.get("patterns", [])
             added = 0
@@ -748,7 +757,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/source-excludes/remove":
             # Body: {"source_path": "/path", "pattern": "p1"}
-            s, src, dst, exc, src_exc = parse_conf()
+            s, src, dst, exc, src_exc, _ = parse_conf()
             src_path = body.get("source_path", "").strip()
             pattern  = body.get("pattern", "").strip()
             if src_path and src_path in src_exc:
@@ -781,7 +790,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/dry-run":
             """Simulate a backup — count files that WOULD be archived without writing."""
-            s, src_entries, dsts, exc, src_exc = parse_conf()
+            s, src_entries, dsts, exc, src_exc, _ = parse_conf()
             source_path = body.get("source_path", "")
             results = []
             for entry in src_entries:
@@ -817,6 +826,70 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 except Exception as e:
                     results.append({"label": src_label, "path": src_path, "error": str(e)})
             return self.jsend({"ok": True, "results": results})
+
+        # ── Remote Destinations (S3 / B2 / rclone) ────────────────────────────
+
+        if p == "/api/remote-dests":
+            """List all configured remote destinations."""
+            s, src, dst, exc, src_exc, rem = parse_conf()
+            remotes = []
+            for entry in rem:
+                uri   = entry.split("|")[0]
+                label = entry.split("|")[1] if "|" in entry else uri
+                scheme = uri.split("://")[0] if "://" in uri else uri.split(":")[0]
+                remotes.append({"uri": uri, "label": label, "scheme": scheme})
+            return self.jsend({"ok": True, "remotes": remotes})
+
+        if p == "/api/remote-dests/add":
+            """Add a remote destination. Body: {uri, label}"""
+            s, src, dst, exc, src_exc, rem = parse_conf()
+            uri   = body.get("uri", "").strip()
+            label = body.get("label", "").strip()
+            if not uri or not label:
+                return self.jsend({"ok": False, "error": "uri and label required"})
+            # Validate scheme
+            if not any(uri.startswith(p) for p in ["s3://", "b2://", "rclone:"]):
+                return self.jsend({"ok": False, "error": "URI must start with s3://, b2://, or rclone:"})
+            entry = f"{uri}|{label}"
+            if entry not in rem:
+                rem.append(entry)
+                write_conf(s, src, dst, exc, src_exc, rem)
+            return self.jsend({"ok": True})
+
+        if p == "/api/remote-dests/remove":
+            """Remove a remote destination. Body: {uri}"""
+            s, src, dst, exc, src_exc, rem = parse_conf()
+            uri = body.get("uri", "").strip()
+            rem = [e for e in rem if e.split("|")[0] != uri]
+            write_conf(s, src, dst, exc, src_exc, rem)
+            return self.jsend({"ok": True})
+
+        if p == "/api/remote-dests/test":
+            """Test CLI availability for a given scheme. Body: {scheme}"""
+            scheme = body.get("scheme", "").strip().lower()
+            cli_map = {
+                "s3":     ("aws",    ["aws", "--version"]),
+                "b2":     ("b2",     ["b2", "version"]),
+                "rclone": ("rclone", ["rclone", "version", "--check"]),
+            }
+            if scheme not in cli_map:
+                return self.jsend({"ok": False, "error": f"Unknown scheme '{scheme}'"})
+            cli_name, cmd = cli_map[scheme]
+            r = sh(cmd)
+            if r.returncode == 0:
+                version = (r.stdout or r.stderr).splitlines()[0][:80]
+                return self.jsend({"ok": True, "cli": cli_name, "version": version})
+            else:
+                return self.jsend({
+                    "ok": False,
+                    "cli": cli_name,
+                    "error": f"{cli_name} not found or not configured",
+                    "install": {
+                        "s3": "brew install awscli  →  aws configure",
+                        "b2": "brew install b2-tools  →  b2 authorize-account",
+                        "rclone": "brew install rclone  →  rclone config",
+                    }.get(scheme, ""),
+                })
 
         self.send_response(404); self.end_headers()
 
