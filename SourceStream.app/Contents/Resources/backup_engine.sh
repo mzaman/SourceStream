@@ -733,8 +733,9 @@ process_backup() {
             INCR_ZIP_LIST=$(mktemp /tmp/ss_zip_list.XXXXXX)
             (
                 cd "$(dirname "$REAL_SRC")" || exit 1
-                find "$(basename "$REAL_SRC")" -newer "$_SENT" -type f 2>/dev/null \
-                    | grep -v "\.DS_Store\|/node_modules/\|/__pycache__/\|\.photoslibrary/" \
+                # -P: never follow symlinks — prevents .fcpcache -> . infinite loop
+                find -P "$(basename "$REAL_SRC")" -newer "$_SENT" -type f 2>/dev/null \
+                    | grep -v "\.DS_Store\|/node_modules/\|/__pycache__/\|\.photoslibrary/\|/\.fcpcache/" \
                     > "$INCR_ZIP_LIST"
             )
             local _ZIFC; _ZIFC=$(wc -l < "$INCR_ZIP_LIST" | tr -d ' ')
@@ -744,7 +745,8 @@ process_backup() {
         (
             cd "$(dirname "$REAL_SRC")" || exit 1
             if [ -n "$INCR_ZIP_LIST" ] && [ -s "$INCR_ZIP_LIST" ]; then
-                COPYFILE_DISABLE=1 zip -r -${CLEVEL} "$STAGE_PATH" \
+                # -y: store symlinks as symlinks (prevents following .fcpcache -> . infinite loop)
+                COPYFILE_DISABLE=1 zip -r -y -${CLEVEL} "$STAGE_PATH" \
                     -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
                     -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
                     -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
@@ -753,7 +755,8 @@ process_backup() {
                     - < "$INCR_ZIP_LIST" \
                     2>"$TAR_STDERR_TMP"
             else
-                COPYFILE_DISABLE=1 zip -r -${CLEVEL} "$STAGE_PATH" "$(basename "$REAL_SRC")" \
+                # -y: store symlinks as symlinks (prevents following .fcpcache -> . infinite loop)
+                COPYFILE_DISABLE=1 zip -r -y -${CLEVEL} "$STAGE_PATH" "$(basename "$REAL_SRC")" \
                     -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
                     -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
                     -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
