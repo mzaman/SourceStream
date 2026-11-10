@@ -363,6 +363,9 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
     <div class="nav-item" data-page="settings" onclick="go('settings')">
       <span class="nav-icon">⚙️</span>Settings
     </div>
+    <div class="nav-item" data-page="remotes" onclick="go('remotes')">
+      <span class="nav-icon">☁️</span>Remote Dests
+    </div>
 
     <div class="nav-section">Tools</div>
     <div class="nav-item" data-page="history" onclick="go('history')">
@@ -983,6 +986,59 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
       </div>
     </div>
 
+    <!-- ── Remote Destinations Page ──────────────────────────────────────── -->
+    <div class="page" id="pg-remotes">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">☁️ Remote Destinations</span>
+          <button class="btn btn-muted" onclick="loadRemoteDests()">↻ Refresh</button>
+        </div>
+        <div class="text-sm text-muted" style="margin-bottom:14px">
+          After each local backup, archives are automatically uploaded to configured remote destinations.
+          Supported: <strong>AWS S3</strong>, <strong>Backblaze B2</strong>, <strong>rclone</strong>.
+        </div>
+        <div id="remote-list"><div class="empty">No remote destinations configured</div></div>
+      </div>
+
+      <!-- Add Remote Destination -->
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">➕ Add Remote Destination</span></div>
+        <div style="display:grid;gap:10px">
+          <div>
+            <label class="text-sm text-muted">Remote URI</label>
+            <input id="inp-remote-uri" class="inp" placeholder="s3://my-bucket/backups   or   b2://my-bucket/backups   or   rclone:remote:path">
+          </div>
+          <div>
+            <label class="text-sm text-muted">Display Label</label>
+            <input id="inp-remote-label" class="inp" placeholder="AWS S3 / Backblaze B2 / My Remote">
+          </div>
+          <div class="flex" style="gap:8px">
+            <button class="btn btn-primary" onclick="addRemoteDest()">Add Destination</button>
+            <button class="btn btn-muted" onclick="testRemoteCLI()">🔧 Test CLI</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- CLI Setup Guide -->
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">🛠 CLI Setup Guide</span></div>
+        <div style="font-size:.78rem;display:grid;gap:12px">
+          <div>
+            <div style="font-weight:600;margin-bottom:4px">AWS S3 (<code>s3://bucket/prefix</code>)</div>
+            <code style="display:block;padding:8px;background:var(--card2);border-radius:var(--rs);font-size:.72rem">brew install awscli<br>aws configure  # enter Access Key ID + Secret</code>
+          </div>
+          <div>
+            <div style="font-weight:600;margin-bottom:4px">Backblaze B2 (<code>b2://bucket/prefix</code>)</div>
+            <code style="display:block;padding:8px;background:var(--card2);border-radius:var(--rs);font-size:.72rem">brew install b2-tools<br>b2 authorize-account  # enter keyID + applicationKey</code>
+          </div>
+          <div>
+            <div style="font-weight:600;margin-bottom:4px">rclone — any cloud (<code>rclone:remote:path</code>)</div>
+            <code style="display:block;padding:8px;background:var(--card2);border-radius:var(--rs);font-size:.72rem">brew install rclone<br>rclone config  # interactive setup for any provider</code>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div><!-- /pages -->
 </div><!-- /main -->
 
@@ -994,7 +1050,7 @@ const BASE = 'http://127.0.0.1:7474';
 const PAGE_TITLES = {
   dashboard:'Dashboard', backup:'Run Backup', archives:'Archives',
   logs:'Logs', health:'Health Check', schedule:'Schedule', settings:'Settings',
-  history:'Backup History', notes:'Notes & System Info'
+  history:'Backup History', notes:'Notes & System Info', remotes:'Remote Destinations'
 };
 let currentPage = 'dashboard';
 let status = null;
@@ -1072,6 +1128,7 @@ function go(page){
   if(page==='backup')   { loadBackupLog(); loadBackupSources(); }
   if(page==='history')  loadHistory();
   if(page==='notes')    loadNotes();
+  if(page==='remotes')  loadRemoteDests();
 }
 
 // ── Poll loop ─────────────────────────────────────────────────────────────────
@@ -2038,6 +2095,52 @@ async function resetIncrementalAll(){
   const d = await api('POST','/api/incremental/reset',{});
   if(d.ok){ toast('All manifests reset','success'); loadIncrementalStatus(); }
   else toast('Reset failed: '+(d.error||'?'),'error');
+}
+
+// ── Remote Destinations ───────────────────────────────────────────────────────
+async function loadRemoteDests(){
+  const d = await api('GET', '/api/remote-dests');
+  if(!d.ok){ $('remote-list').innerHTML='<div class="empty">Could not load remotes</div>'; return; }
+  const remotes = d.remotes||[];
+  if(remotes.length===0){ $('remote-list').innerHTML='<div class="empty">No remote destinations configured</div>'; return; }
+  $('remote-list').innerHTML = remotes.map(r=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--card2);border-radius:var(--rs);margin-bottom:8px">
+      <div>
+        <span class="pill p-b">\${esc(r.scheme)}</span>
+        <strong style="margin-left:8px">\${esc(r.label)}</strong>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:2px">\${esc(r.uri)}</div>
+      </div>
+      <button class="btn btn-muted" onclick="removeRemoteDest('\${esc(r.uri)}')">Remove</button>
+    </div>`).join('');
+}
+
+async function addRemoteDest(){
+  const uri = $('inp-remote-uri').value.trim();
+  const label = $('inp-remote-label').value.trim();
+  if(!uri||!label){ toast('URI and label required','error'); return; }
+  const d = await api('POST','/api/remote-dests/add',{uri, label});
+  if(d.ok){ toast('Remote destination added','success'); $('inp-remote-uri').value=''; $('inp-remote-label').value=''; loadRemoteDests(); }
+  else toast('Error: '+(d.error||'?'),'error');
+}
+
+async function removeRemoteDest(uri){
+  if(!confirm('Remove this remote destination?')) return;
+  const d = await api('POST','/api/remote-dests/remove',{uri});
+  if(d.ok){ toast('Removed','success'); loadRemoteDests(); }
+  else toast('Error: '+(d.error||'?'),'error');
+}
+
+async function testRemoteCLI(){
+  const uri = $('inp-remote-uri').value.trim();
+  if(!uri){ toast('Enter a URI first to test its CLI','error'); return; }
+  let scheme = '';
+  if(uri.startsWith('s3://')) scheme='s3';
+  else if(uri.startsWith('b2://')) scheme='b2';
+  else if(uri.startsWith('rclone:')) scheme='rclone';
+  else { toast('Unknown URI scheme (use s3://, b2://, rclone:)','error'); return; }
+  const d = await api('POST','/api/remote-dests/test',{scheme});
+  if(d.ok) toast(`\${d.cli} found: \${d.version}`,'success');
+  else toast(`\${d.cli||scheme} not found. \${d.install||''}`, 'error', 6000);
 }
 
 function toggleTheme(){
