@@ -543,6 +543,19 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
         </div>
       </div>
 
+
+      <!-- Source Size Preview -->
+      <div class="panel" id="source-sizes-panel">
+        <div class="panel-head">
+          <span class="panel-title">📦 Source Folder Sizes</span>
+          <button class="btn btn-muted" onclick="loadSourceSizes()">↻ Refresh</button>
+        </div>
+        <div class="text-sm text-muted" style="margin-bottom:10px">
+          Current disk usage for each configured backup source.
+        </div>
+        <div id="source-sizes-list"><div class="empty text-muted">Click Refresh to scan</div></div>
+      </div>
+
       <!-- Dry-Run section -->
       <div class="panel">
         <div class="panel-head">
@@ -950,6 +963,21 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 
     <!-- ══════════════ HISTORY ══════════════ -->
     <div class="page" id="pg-history">
+
+      <!-- Archive Size Trend Chart -->
+      <div class="panel" style="margin-bottom:16px">
+        <div class="panel-head">
+          <span class="panel-title">📈 Archive Size Trend</span>
+          <button class="btn btn-muted" onclick="loadTrendChart()">↻ Refresh</button>
+        </div>
+        <div class="text-sm text-muted" style="margin-bottom:10px">
+          Total archive size per day across all destinations (last 30 days).
+        </div>
+        <canvas id="trend-canvas" height="140"
+          style="width:100%;display:block;border-radius:var(--rs)"></canvas>
+        <div id="trend-empty" class="empty" style="display:none">No archive data yet</div>
+      </div>
+
       <div class="panel">
         <div class="panel-head">
           <span class="panel-title">🕐 Backup Run History</span>
@@ -1125,8 +1153,8 @@ function go(page){
   if(page==='health')   runHealth();
   if(page==='schedule') loadSchedule();
   if(page==='settings') loadSettings();
-  if(page==='backup')   { loadBackupLog(); loadBackupSources(); }
-  if(page==='history')  loadHistory();
+  if(page==='backup')   { loadBackupLog(); loadBackupSources(); loadSourceSizes(); }
+  if(page==='history')  { loadHistory(); loadTrendChart(); }
   if(page==='notes')    loadNotes();
   if(page==='remotes')  loadRemoteDests();
 }
@@ -2058,8 +2086,10 @@ async function runDryRun(){
 // ── Init ──────────────────────────────────────────────────────────────────────
 fetchStatus();
 loadDiskUsage();
+loadNextRun();
 pollTimer = setInterval(fetchStatus, 10000);
 setInterval(loadDiskUsage, 30000);  // refresh disk every 30s
+setInterval(loadNextRun, 60000);    // refresh countdown every minute
 
 // ── Incremental backup ────────────────────────────────────────────────────────
 async function loadIncrementalStatus(){
@@ -2095,6 +2125,111 @@ async function resetIncrementalAll(){
   const d = await api('POST','/api/incremental/reset',{});
   if(d.ok){ toast('All manifests reset','success'); loadIncrementalStatus(); }
   else toast('Reset failed: '+(d.error||'?'),'error');
+}
+
+// ── Source Sizes ─────────────────────────────────────────────────────────────
+async function loadSourceSizes(){
+  const el = $('source-sizes-list');
+  if(el) el.innerHTML = '<div class="empty text-muted">Scanning…</div>';
+  const d = await api('GET', '/api/source-sizes');
+  if(!d.ok || !el){ return; }
+  const rows = (d.sources||[]).map(s=>{
+    const bar = s.size_mb > 0
+      ? `<div style="height:4px;border-radius:2px;background:var(--border);margin-top:5px">
+           <div style="height:4px;border-radius:2px;background:var(--blue);width:${Math.min(100,s.size_mb/10)}%"></div>
+         </div>` : '';
+    const icon = s.exists ? '📁' : '⚠️';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;
+              padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1">
+        <span>${icon} <strong>${esc(s.label)}</strong></span>
+        <div class="text-sm text-muted">${esc(s.path)}</div>
+        ${bar}
+      </div>
+      <div style="text-align:right;min-width:70px">
+        <span style="font-weight:700;color:var(--blue)">${esc(s.size_str)}</span>
+      </div>
+    </div>`;
+  }).join('');
+  el.innerHTML = rows + `<div style="text-align:right;padding-top:8px;font-size:.8rem;color:var(--muted)">
+    Total: <strong style="color:var(--dim)">${esc(d.total_str||'—')}</strong></div>`;
+}
+
+// ── Next Scheduled Run ────────────────────────────────────────────────────────
+async function loadNextRun(){
+  const d = await api('GET', '/api/next-run');
+  const val = $('next-run-val'), sub = $('next-run-sub');
+  if(!val) return;
+  if(d.countdown){
+    val.textContent = 'in ' + d.countdown;
+    sub.textContent = (d.next||'') + (d.schedule_str ? '  ·  ' + d.schedule_str : '');
+    val.style.color = 'var(--green)';
+  } else {
+    val.textContent = '—';
+    sub.textContent = d.schedule_str || 'No schedule configured';
+    val.style.color = 'var(--muted)';
+  }
+}
+
+// ── Archive Trend Chart ───────────────────────────────────────────────────────
+async function loadTrendChart(){
+  const d = await api('GET', '/api/archive-trend');
+  const canvas = $('trend-canvas');
+  const empty  = $('trend-empty');
+  if(!canvas) return;
+  const trend = d.trend || [];
+  if(trend.length === 0){
+    canvas.style.display = 'none';
+    if(empty) empty.style.display = 'block';
+    return;
+  }
+  canvas.style.display = 'block';
+  if(empty) empty.style.display = 'none';
+  // Draw mini bar chart
+  const ctx    = canvas.getContext('2d');
+  const W      = canvas.offsetWidth || 600;
+  const H      = 140;
+  canvas.width  = W;
+  canvas.height = H;
+  const PAD    = { top: 12, right: 10, bottom: 28, left: 44 };
+  const cW     = W - PAD.left - PAD.right;
+  const cH     = H - PAD.top  - PAD.bottom;
+  const maxMB  = Math.max(...trend.map(t => t.size_mb), 1);
+  const isDark = document.documentElement.classList.contains('force-dark') ||
+    (!document.documentElement.classList.contains('force-light') &&
+     window.matchMedia('(prefers-color-scheme:dark)').matches);
+  const fgCol  = isDark ? '#c9d1d9' : '#374151';
+  const gridC  = isDark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.07)';
+  const barCol = '#3b82f6';
+  ctx.clearRect(0, 0, W, H);
+  // Grid lines
+  [0, .25, .5, .75, 1].forEach(r => {
+    const y = PAD.top + cH * (1 - r);
+    ctx.strokeStyle = gridC; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + cW, y); ctx.stroke();
+    ctx.fillStyle = fgCol; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(maxMB * r) + ' MB', PAD.left - 4, y + 4);
+  });
+  // Bars
+  const bW = Math.max(4, cW / trend.length - 2);
+  trend.forEach((t, i) => {
+    const x  = PAD.left + (i / trend.length) * cW + (cW / trend.length - bW) / 2;
+    const bH = (t.size_mb / maxMB) * cH;
+    const y  = PAD.top + cH - bH;
+    const alpha = 0.5 + 0.5 * (t.size_mb / maxMB);
+    ctx.fillStyle = barCol + Math.round(alpha * 255).toString(16).padStart(2,'0');
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(x, y, bW, bH, 2) : ctx.rect(x, y, bW, bH);
+    ctx.fill();
+  });
+  // Date labels (first, mid, last)
+  ctx.fillStyle = fgCol; ctx.font = '10px system-ui'; ctx.textAlign = 'center';
+  [[0,'start'], [Math.floor(trend.length/2),'center'], [trend.length-1,'end']].forEach(([i, align]) => {
+    if(!trend[i]) return;
+    const x = PAD.left + (i / trend.length) * cW + (cW / trend.length) / 2;
+    ctx.textAlign = align==='start' ? 'left' : align==='end' ? 'right' : 'center';
+    ctx.fillText(trend[i].date.slice(5), x, H - 6); // show MM-DD
+  });
 }
 
 // ── Remote Destinations ───────────────────────────────────────────────────────
