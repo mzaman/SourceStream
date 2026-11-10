@@ -28,15 +28,18 @@ ESTIMATED_SIZE_MB=0        # set by preflight_space_check
 mkdir -p "$LOG_DIR" "$SS_DIR/config" "$MANIFEST_DIR"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+# Write directly to log file — do NOT use tee (wrapper script also redirects
+# stdout → backup.log, so tee would cause every line to appear twice).
 log_msg() {
     local TYPE="$1" MSG="$2" TS
     TS=$(date +"%Y-%m-%d %H:%M:%S")
-    echo "[$TS] $TYPE: $MSG" | tee -a "$OUTPUT_LOG"
+    echo "[$TS] $TYPE: $MSG" >> "$OUTPUT_LOG"
 }
 log_err() {
     local MSG="$1" TS
     TS=$(date +"%Y-%m-%d %H:%M:%S")
-    echo "[$TS] ERROR: $MSG" | tee -a "$ERROR_LOG" -a "$OUTPUT_LOG"
+    echo "[$TS] ERROR: $MSG" >> "$ERROR_LOG"
+    echo "[$TS] ERROR: $MSG" >> "$OUTPUT_LOG"
 }
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
@@ -63,15 +66,15 @@ detect_gdrive() {
         # Pick first GoogleDrive-* folder found (handles any email address)
         local d
         for d in "$cs"/GoogleDrive-*/; do
-            [ -d "${d}My Drive" ] && { echo "${d}My Drive/Developer Backups"; return; }
+            [ -d "${d}My Drive" ] && { echo "${d}My Drive/SourceStream Backups"; return; }
         done
     fi
     # Legacy Google Drive location
     for d in "$HOME/Google Drive/My Drive" "$HOME/Google Drive"; do
-        [ -d "$d" ] && { echo "$d/Developer Backups"; return; }
+        [ -d "$d" ] && { echo "$d/SourceStream Backups"; return; }
     done
     # Fallback — user will configure via Dashboard
-    echo "$HOME/Library/CloudStorage/GoogleDrive/My Drive/Developer Backups"
+    echo "$HOME/Library/CloudStorage/GoogleDrive/My Drive/SourceStream Backups"
 }
 
 # ── Initialize config if missing ──────────────────────────────────────────────
@@ -193,7 +196,13 @@ make_archive_name() {
     DATE_PART=$(date +"%Y%m%d")
     TIME_PART=$(date +"%H%M%S")
 
-    local TEMPLATE="${ARCHIVE_PREFIX:-{label}}"
+    # Bug fix: "${ARCHIVE_PREFIX:-{label}}" is ambiguous in bash 3.2 when
+    # ARCHIVE_PREFIX is already set to "{label}" — the outer } closes the
+    # parameter expansion early, leaving a stray literal } in the name.
+    # Use an explicit empty-check guard instead.
+    local _PFX="$ARCHIVE_PREFIX"
+    [ -z "$_PFX" ] && _PFX="{label}"
+    local TEMPLATE="$_PFX"
     local NAME="$TEMPLATE"
     NAME="${NAME//\{label\}/$SAFE_LABEL}"
     NAME="${NAME//\{hostname\}/$HOSTNAME_SHORT}"
@@ -437,6 +446,9 @@ TAR_EXCLUDES=(
     --exclude="__pycache__"  --exclude="*.pyc"  --exclude=".venv"  --exclude="venv"
     # Photos Library — requires Full Disk Access; skip gracefully
     --exclude="*.photoslibrary"
+    # Apple internal cache symlinks (.fcpcache is a self-referencing symlink
+    # inside iMovie Library: .fcpcache -> . causes infinite recursion in zip/tar)
+    --exclude=".fcpcache"
 )
 
 # Append any user-defined custom excludes from config [excludes] section
@@ -736,6 +748,7 @@ process_backup() {
                     -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
                     -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
                     -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
+                    -x "*/.fcpcache" -x "*/.fcpcache/*" \
                     "${ZIP_EXCL_FLAGS[@]}" \
                     - < "$INCR_ZIP_LIST" \
                     2>"$TAR_STDERR_TMP"
@@ -744,6 +757,7 @@ process_backup() {
                     -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
                     -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
                     -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
+                    -x "*/.fcpcache" -x "*/.fcpcache/*" \
                     "${ZIP_EXCL_FLAGS[@]}" \
                     2>"$TAR_STDERR_TMP"
             fi
@@ -777,6 +791,17 @@ process_backup() {
         REAL_ERRORS=$(( ${REAL_ERRORS:-0} + 0 ))
         if [ "$PERM_WARNS" -gt 0 ]; then
             log_msg "WARN" "   ⚠️  $PERM_WARNS path(s) skipped: 'Operation not permitted' (requires Full Disk Access for Photos/Mail/Messages). Continuing."
+            # Show GUI dialog prompting user to grant Full Disk Access.
+            # Run in background so it doesn't stall the backup process.
+            (
+                local _BTN
+                _BTN=$(osascript -e \
+                    "display dialog \"SourceStream could not access $PERM_WARNS protected file(s) during backup.\n\nTo allow full backups of Photos, Mail, Messages and other system folders:\n\n  1. Open System Settings\n  2. Go to Privacy & Security → Full Disk Access\n  3. Enable SourceStream (and Terminal if running manually)\n\nBackup completed with some files skipped.\" with title \"SourceStream — Full Disk Access Needed\" buttons {\"Open Privacy Settings\", \"OK\"} default button \"Open Privacy Settings\" with icon caution" \
+                    2>/dev/null) || true
+                if [ "${_BTN:-}" = "button returned:Open Privacy Settings" ]; then
+                    open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
+                fi
+            ) &
         fi
         if [ "$REAL_ERRORS" -gt 0 ]; then
             cat "$TAR_STDERR_TMP" >> "$ERROR_LOG"
