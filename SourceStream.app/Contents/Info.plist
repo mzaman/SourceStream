@@ -15,14 +15,14 @@
   <key>NSHighResolutionCapable</key>   <true/>
 
   <!--
-    LSUIElement=true  → background agent (no Dock icon, no menu bar)
-    LSUIElement=false → regular app (Dock icon appears when open)
-    We REMOVE LSUIElement entirely so the app shows in the Dock when
-    the user launches it via the Desktop launcher / Finder.
-    The MacOS/SourceStream launcher quits itself immediately after
-    opening the browser, so the Dock icon only appears briefly during
-    launch (expected UX for a browser-based utility).
+    LSUIElement=false  → show Dock icon when the app is running
+    NSPrincipalClass   → tells macOS this is a standard foreground app
+                         (required for Dock icon to appear in shell-based bundles)
+    The launcher keeps itself alive until the browser window closes,
+    so the Dock icon persists for the full session.
   -->
+  <key>LSUIElement</key>               <false/>
+  <key>NSPrincipalClass</key>          <string>NSApplication</string>
 
   <!-- macOS 10.14+ privacy descriptions (needed for Full Disk Access prompt) -->
   <key>NSDesktopFolderUsageDescription</key>
