@@ -56,6 +56,7 @@ DEFAULT_SETTINGS = {
     "BACKUP_VERIFY":       "false",
     "ARCHIVE_FORMAT":      "tar.gz",
     "NOTIFY_ON_COMPLETE":  "false",
+    "BACKUP_MODE":         "full",
 }
 
 def parse_conf():
@@ -807,16 +808,78 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     file_count = int(r.stdout.strip())
                     r2 = sh(["du", "-sh", src_path])
                     raw_size = r2.stdout.split()[0] if r2.returncode == 0 else "?"
+                    # Incremental: add changed file count and last-backup time
+                    safe_label = "".join(c for c in src_label if c.isalnum() or c in "_-")[:60]
+                    manifest_f = SS_DIR / "manifests" / (safe_label + ".manifest")
+                    mtime_f    = SS_DIR / "manifests" / (safe_label + ".mtime")
+                    last_backup_ts = manifest_f.read_text().strip() if manifest_f.exists() else None
+                    changed_files = None
+                    if mtime_f.exists() and s.get("BACKUP_MODE") == "incremental":
+                        rc = sh(
+                            "find " + repr(src_path) + " -newer " + repr(str(mtime_f)) +
+                            " -not -name \'.DS_Store\' -type f 2>/dev/null | wc -l",
+                            shell=True
+                        )
+                        try:
+                            changed_files = int(rc.stdout.strip())
+                        except Exception:
+                            changed_files = None
                     results.append({
                         "label": src_label,
                         "path": src_path,
                         "files": file_count,
                         "raw_size": raw_size,
                         "would_archive": True,
+                        "last_incremental_backup": last_backup_ts,
+                        "changed_files": changed_files,
                     })
                 except Exception as e:
                     results.append({"label": src_label, "path": src_path, "error": str(e)})
             return self.jsend({"ok": True, "results": results})
+
+        if p == "/api/incremental/status":
+            """Return per-source incremental manifest info."""
+            s, src_entries, _, _, _ = parse_conf()
+            manifest_dir = SS_DIR / "manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            info = []
+            for entry in src_entries:
+                src_path  = entry.split("|")[0]
+                src_label = entry.split("|")[1] if "|" in entry else src_path
+                safe      = "".join(c for c in src_label if c.isalnum() or c in "_-")[:60]
+                manifest_f = manifest_dir / (safe + ".manifest")
+                mtime_f    = manifest_dir / (safe + ".mtime")
+                last_backup_ts = manifest_f.read_text().strip() if manifest_f.exists() else None
+                info.append({
+                    "label":        src_label,
+                    "path":         src_path,
+                    "last_backup":  last_backup_ts,
+                    "has_manifest": mtime_f.exists(),
+                })
+            return self.jsend({
+                "ok":     True,
+                "mode":   s.get("BACKUP_MODE", "full"),
+                "sources": info,
+            })
+
+        if p == "/api/incremental/reset":
+            """Reset (delete) the incremental manifest for one or all sources."""
+            src_label = body.get("label", "").strip()
+            manifest_dir = SS_DIR / "manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            removed = []
+            if src_label:
+                safe = "".join(c for c in src_label if c.isalnum() or c in "_-")[:60]
+                for suffix in [".manifest", ".mtime"]:
+                    fp = manifest_dir / (safe + suffix)
+                    if fp.exists():
+                        fp.unlink()
+                        removed.append(fp.name)
+            else:
+                for f in list(manifest_dir.glob("*.manifest")) + list(manifest_dir.glob("*.mtime")):
+                    f.unlink(missing_ok=True)
+                    removed.append(f.name)
+            return self.jsend({"ok": True, "removed": removed})
 
         self.send_response(404); self.end_headers()
 

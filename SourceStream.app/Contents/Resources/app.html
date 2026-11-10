@@ -788,6 +788,30 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
               <div>Config: <code id="conf-path-display">~/.sourcestream/config/sourcestream.conf</code></div>
               <div style="margin-top:4px">Logs: <code id="logs-path-display">~/.sourcestream/logs/</code></div>
             </div>
+
+            <!-- Incremental Backup Mode -->
+            <div style="margin-top:16px;padding:14px;background:var(--card2);border-radius:var(--rs);border:1px solid var(--border)">
+              <div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:10px">
+                <div>
+                  <div style="font-weight:600;font-size:.82rem">🔄 Backup Mode</div>
+                  <div style="font-size:.72rem;color:var(--muted);margin-top:2px">
+                    <strong>Full</strong> archives everything each run. <strong>Incremental</strong> only archives files changed since the last backup.
+                  </div>
+                </div>
+                <select id="sel-backup-mode" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:6px;font-size:.78rem"
+                  onchange="saveSetting('BACKUP_MODE', this.value); loadIncrementalStatus()">
+                  <option value="full">Full</option>
+                  <option value="incremental">Incremental</option>
+                </select>
+              </div>
+              <div id="incr-status-panel" style="display:none">
+                <div style="font-size:.75rem;font-weight:600;color:var(--muted);margin-bottom:6px">Per-source manifest status:</div>
+                <div id="incr-status-list" style="font-size:.75rem"></div>
+                <div class="flex" style="gap:8px;margin-top:10px">
+                  <button class="btn btn-muted" onclick="resetIncrementalAll()">🗑 Reset All Manifests</button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Custom Excludes (global) -->
@@ -1514,6 +1538,10 @@ async function loadSettings(){
   $('tog-hostname').checked = s.HOSTNAME_IN_NAME==='true';
   if($('tog-notify')) $('tog-notify').checked = s.NOTIFY_ON_COMPLETE==='true';
   if($('tog-verify')) $('tog-verify').checked = s.BACKUP_VERIFY==='true';
+  if($('sel-backup-mode')) {
+    $('sel-backup-mode').value = s.BACKUP_MODE||'full';
+    loadIncrementalStatus();
+  }
 
   // Update config/logs path display
   if(r.config_path) $('conf-path-display').textContent = r.config_path.replace(/\/Users\/[^/]+/,'~');
@@ -1975,6 +2003,42 @@ fetchStatus();
 loadDiskUsage();
 pollTimer = setInterval(fetchStatus, 10000);
 setInterval(loadDiskUsage, 30000);  // refresh disk every 30s
+
+// ── Incremental backup ────────────────────────────────────────────────────────
+async function loadIncrementalStatus(){
+  const mode = $('sel-backup-mode') ? $('sel-backup-mode').value : 'full';
+  const panel = $('incr-status-panel');
+  if(!panel) return;
+  if(mode !== 'incremental'){ panel.style.display='none'; return; }
+  panel.style.display='block';
+  const d = await api('GET','/api/incremental/status');
+  if(!d.ok){ $('incr-status-list').innerHTML='<em>Could not load manifest info.</em>'; return; }
+  const rows = (d.sources||[]).map(s=>{
+    const last = s.last_backup ? `<span style="color:var(--green)">${esc(s.last_backup)}</span>` : '<span style="color:var(--amber)">never backed up</span>';
+    const badge = s.has_manifest ? '<span class="pill p-g">has manifest</span>' : '<span class="pill p-a">no manifest (full run)</span>';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
+      <div><strong>${esc(s.label)}</strong><br><span style="color:var(--muted)">${esc(s.path)}</span></div>
+      <div style="text-align:right">${badge}<br>${last}<br>
+        <button class="btn btn-muted" style="font-size:.68rem;padding:2px 8px;margin-top:3px" onclick="resetIncrementalSource('${esc(s.label)}')">Reset</button>
+      </div>
+    </div>`;
+  }).join('');
+  $('incr-status-list').innerHTML = rows || '<em>No sources configured.</em>';
+}
+
+async function resetIncrementalSource(label){
+  if(!confirm('Reset incremental manifest for "'+label+'"?\nNext backup will be a full baseline.')) return;
+  const d = await api('POST','/api/incremental/reset',{label});
+  if(d.ok){ toast('Manifest reset for '+label,'success'); loadIncrementalStatus(); }
+  else toast('Reset failed: '+(d.error||'?'),'error');
+}
+
+async function resetIncrementalAll(){
+  if(!confirm('Reset ALL incremental manifests?\nEvery source will do a full baseline on the next run.')) return;
+  const d = await api('POST','/api/incremental/reset',{});
+  if(d.ok){ toast('All manifests reset','success'); loadIncrementalStatus(); }
+  else toast('Reset failed: '+(d.error||'?'),'error');
+}
 
 function toggleTheme(){
   const html=document.documentElement;
