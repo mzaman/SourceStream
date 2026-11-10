@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SourceStream Dashboard Server  v1.0.7
+SourceStream Dashboard Server  v1.0.8
 SourceStream.app/Contents/Resources/server.py
 
 Binds to 127.0.0.1:7474.
@@ -11,7 +11,7 @@ Run via LaunchAgent (auto-starts at login) or via the app launcher.
 import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil, platform, sys
 from pathlib import Path
 
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 PORT        = 7474
 APP_RES     = Path(__file__).parent          # …/SourceStream.app/Contents/Resources/
 SS_DIR      = Path.home() / ".sourcestream"
@@ -536,6 +536,44 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 except Exception:
                     pass
             return self.jsend(list(reversed(history[-30:])))
+
+
+
+        if p == "/api/incremental/status":
+            """Return per-source incremental manifest info."""
+            s, src_entries, _, _, _, _ = parse_conf()
+            manifest_dir = SS_DIR / "manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            info = []
+            for entry in src_entries:
+                src_path  = entry.split("|")[0]
+                src_label = entry.split("|")[1] if "|" in entry else src_path
+                safe      = "".join(c for c in src_label if c.isalnum() or c in "_-")[:60]
+                manifest_f = manifest_dir / (safe + ".manifest")
+                mtime_f    = manifest_dir / (safe + ".mtime")
+                last_backup_ts = manifest_f.read_text().strip() if manifest_f.exists() else None
+                info.append({
+                    "label":        src_label,
+                    "path":         src_path,
+                    "last_backup":  last_backup_ts,
+                    "has_manifest": mtime_f.exists(),
+                })
+            return self.jsend({
+                "ok":     True,
+                "mode":   s.get("BACKUP_MODE", "full"),
+                "sources": info,
+            })
+
+        if p == "/api/remote-dests":
+            """List all configured remote destinations."""
+            s, src, dst, exc, src_exc, rem = parse_conf()
+            remotes = []
+            for entry in rem:
+                uri   = entry.split("|")[0]
+                label = entry.split("|")[1] if "|" in entry else uri
+                scheme = uri.split("://")[0] if "://" in uri else uri.split(":")[0]
+                remotes.append({"uri": uri, "label": label, "scheme": scheme})
+            return self.jsend({"ok": True, "remotes": remotes})
 
         # Static fallback
         fp = APP_RES / p.lstrip("/")

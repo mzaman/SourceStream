@@ -11,7 +11,7 @@
 set -e
 
 APP_NAME="SourceStream"
-APP_VERSION="1.0.7"
+APP_VERSION="1.0.8"
 APP_BUNDLE="SourceStream.app"
 SRC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SRC_APP="$SRC_DIR/$APP_BUNDLE"
