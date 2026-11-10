@@ -173,6 +173,7 @@ for c in \
 done
 
 if [ -n "$CHROME_BIN" ]; then
+    # Launch Chrome in app-mode (foreground wait so Dock icon stays visible)
     "$CHROME_BIN" \
         --app="$URL" \
         --window-size=1340,860 \
@@ -180,7 +181,20 @@ if [ -n "$CHROME_BIN" ]; then
         --no-first-run \
         --disable-extensions \
         2>/dev/null &
+    BROWSER_PID=$!
 else
-    # Safari / default browser fallback
+    # Safari / default browser fallback — open and track PID
     open "$URL"
+    BROWSER_PID=$!
+fi
+
+# ── 6. Keep process alive so Dock icon remains visible ────────────────────────
+# macOS shows the app icon in the Dock only while this process is running.
+# We wait until the browser closes, then exit cleanly.
+# If BROWSER_PID is 0 (open fallback), we do a short keepalive instead.
+if [ -n "$BROWSER_PID" ] && [ "$BROWSER_PID" -gt 0 ] 2>/dev/null; then
+    wait "$BROWSER_PID" 2>/dev/null || true
+else
+    # Fallback: stay alive for 30 s to let the icon appear, then exit quietly
+    sleep 30
 fi

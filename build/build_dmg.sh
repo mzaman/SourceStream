@@ -92,7 +92,7 @@ clear
 echo ""
 echo "╔════════════════════════════════════════════════════╗"
 echo "║   ⚡ SourceStream  —  Installer  v1.0.8           ║"
-echo "║   Developer Backup Utility                         ║"
+echo "║   Smart backups. Zero friction.                    ║"
 echo "╚════════════════════════════════════════════════════╝"
 echo ""
 
@@ -538,8 +538,8 @@ echo "   ✅ Uninstall SourceStream.command staged"
 # ── 3e. README.txt ────────────────────────────────────────────────────────────
 {
 printf '%s\n' \
-    'SourceStream  --  Developer Backup Utility  v1.0.8' \
-    '====================================================' \
+    'SourceStream  --  Smart backups. Zero friction.  v1.0.8' \
+    '=========================================================' \
     '' \
     'QUICK INSTALL (Recommended)' \
     '----------------------------' \
