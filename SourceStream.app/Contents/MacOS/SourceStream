@@ -60,6 +60,7 @@ required = {
     "HOSTNAME_IN_NAME":    "false",
     "BACKUP_VERIFY":       "false",
     "ARCHIVE_FORMAT":      "tar.gz",
+    "NOTIFY_ON_COMPLETE":  "false",
 }
 
 # Find the [settings] section

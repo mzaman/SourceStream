@@ -14,6 +14,32 @@
   --r:10px;--rs:6px;
   --sidebar-w:230px;--topbar-h:52px;
 }
+
+/* ── Light mode (prefers-color-scheme) ── */
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#f0f4f8;--sidebar:#e2e8f0;--card:#ffffff;--card2:#f8fafc;
+    --border:#cbd5e1;--border2:#e2e8f0;
+    --green:#16a34a;--amber:#d97706;--red:#dc2626;--blue:#2563eb;--purple:#7c3aed;--cyan:#0891b2;
+    --text:#1e293b;--muted:#64748b;--dim:#94a3b8;
+  }
+}
+/* ── Force theme via JS toggle ── */
+html.force-dark{ color-scheme: dark; }
+html.force-dark :root{
+  --bg:#0d1117;--sidebar:#0a0e18;--card:#161b27;--card2:#1c2235;
+  --border:#222d45;--border2:#2d3a55;
+  --green:#22c55e;--amber:#f59e0b;--red:#ef4444;--blue:#3b82f6;--purple:#a855f7;--cyan:#06b6d4;
+  --text:#e2e8f0;--muted:#64748b;--dim:#94a3b8;
+}
+html.force-light{ color-scheme: light; }
+html.force-light :root{
+  --bg:#f0f4f8;--sidebar:#e2e8f0;--card:#ffffff;--card2:#f8fafc;
+  --border:#cbd5e1;--border2:#e2e8f0;
+  --green:#16a34a;--amber:#d97706;--red:#dc2626;--blue:#2563eb;--purple:#7c3aed;--cyan:#0891b2;
+  --text:#1e293b;--muted:#64748b;--dim:#94a3b8;
+}
+
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;font-size:14px}
 
@@ -375,7 +401,8 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
       <button class="btn btn-muted" onclick="exportConfig()" title="Export config file">
         📤 Export
       </button>
-      <button class="btn btn-primary" onclick="manualRefresh()">
+      <button class="btn btn-muted" title="Toggle light/dark mode" onclick="toggleTheme()" style="font-size:.85rem;padding:4px 8px">🌙</button>
+          <button class="btn btn-primary" onclick="manualRefresh()">
         <div class="spinner" id="spinner" style="display:none"></div>
         🔄 Refresh
       </button>
@@ -578,6 +605,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
           <div class="flex">
             <button class="btn btn-muted" onclick="loadLogs()">↻ Refresh</button>
             <button class="btn btn-muted" onclick="rotateLogs()">🗑 Rotate</button>
+          <button class="btn btn-muted" onclick="clearErrors()" style="margin-left:6px">🗑 Clear Errors</button>
           </div>
         </div>
         <div class="log-wrap" id="log-output" style="max-height:500px"><span class="ll-i">Loading…</span></div>
@@ -728,6 +756,30 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
               </div>
               <label class="toggle">
                 <input type="checkbox" id="tog-hostname" onchange="saveSetting('HOSTNAME_IN_NAME', this.checked?'true':'false')">
+                <div class="toggle-track"></div>
+              </label>
+            </div>
+
+
+            <div class="toggle-row mb">
+              <div>
+                <div class="toggle-label">Auto-notify after Scheduled Backups</div>
+                <div class="toggle-desc">Send macOS notification when a cron-triggered backup finishes</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="tog-notify" onchange="saveSetting('NOTIFY_ON_COMPLETE', this.checked?'true':'false')">
+                <div class="toggle-track"></div>
+              </label>
+            </div>
+
+
+            <div class="toggle-row mb">
+              <div>
+                <div class="toggle-label">Auto-Verify Archives After Backup</div>
+                <div class="toggle-desc">Test archive integrity immediately after each backup completes</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="tog-verify" onchange="saveSetting('BACKUP_VERIFY', this.checked?'true':'false')">
                 <div class="toggle-track"></div>
               </label>
             </div>
@@ -1356,6 +1408,14 @@ async function loadLogs(){
   }
 }
 
+
+async function clearErrors(){
+  if(!confirm('Clear the error log?')) return;
+  const r=await api('POST','/api/clear-errors');
+  if(r&&r.ok){ toast('Error log cleared','success'); loadLogs(); }
+  else toast('Failed to clear error log','error');
+}
+
 async function rotateLogs(){
   if(!confirm('Trim output.log to last 100 lines and clear error.log?')) return;
   const r = await api('POST','/api/rotate-logs');
@@ -1452,6 +1512,8 @@ async function loadSettings(){
   $('comp-val').textContent = cl;
   $('inp-prefix').value = s.ARCHIVE_PREFIX||'{label}';
   $('tog-hostname').checked = s.HOSTNAME_IN_NAME==='true';
+  if($('tog-notify')) $('tog-notify').checked = s.NOTIFY_ON_COMPLETE==='true';
+  if($('tog-verify')) $('tog-verify').checked = s.BACKUP_VERIFY==='true';
 
   // Update config/logs path display
   if(r.config_path) $('conf-path-display').textContent = r.config_path.replace(/\/Users\/[^/]+/,'~');
@@ -1913,6 +1975,28 @@ fetchStatus();
 loadDiskUsage();
 pollTimer = setInterval(fetchStatus, 10000);
 setInterval(loadDiskUsage, 30000);  // refresh disk every 30s
+
+function toggleTheme(){
+  const html=document.documentElement;
+  if(html.classList.contains('force-light')){
+    html.classList.remove('force-light');
+    html.classList.add('force-dark');
+    localStorage.setItem('ss-theme','dark');
+  } else if(html.classList.contains('force-dark')){
+    html.classList.remove('force-dark');
+    // Auto mode
+    localStorage.removeItem('ss-theme');
+  } else {
+    html.classList.add('force-light');
+    localStorage.setItem('ss-theme','light');
+  }
+}
+(function applyStoredTheme(){
+  const t=localStorage.getItem('ss-theme');
+  if(t==='dark') document.documentElement.classList.add('force-dark');
+  else if(t==='light') document.documentElement.classList.add('force-light');
+})();
+
 </script>
 </body>
 </html>

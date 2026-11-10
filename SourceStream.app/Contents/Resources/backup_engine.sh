@@ -89,6 +89,8 @@ COMPRESSION_LEVEL=6
 ARCHIVE_PREFIX={label}
 HOSTNAME_IN_NAME=false
 ARCHIVE_FORMAT=tar.gz
+BACKUP_VERIFY=false
+NOTIFY_ON_COMPLETE=false
 
 [sources]
 $HOME/Developer|Developer
@@ -138,6 +140,7 @@ load_config() {
                         HOSTNAME_IN_NAME)     HOSTNAME_IN_NAME="$val" ;;
                         BACKUP_VERIFY)        BACKUP_VERIFY="$val" ;;
                         ARCHIVE_FORMAT)       ARCHIVE_FORMAT="$val" ;;
+                        NOTIFY_ON_COMPLETE)   NOTIFY_ON_COMPLETE="$val" ;;
                     esac
                 fi
                 ;;
@@ -164,6 +167,7 @@ log_msg "INFO" "━━━━━━━━━━━━━━━━━━━━━�
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 HOSTNAME_SHORT=$(hostname -s 2>/dev/null | tr -cd '[:alnum:]_-' | cut -c1-20)
+NOTIFY_ON_COMPLETE="${NOTIFY_ON_COMPLETE:-false}"
 
 # ── Archive name helper ────────────────────────────────────────────────────────
 # Builds archive filename from config template.
@@ -822,3 +826,12 @@ log_msg "INFO" "━━━━━━━━━━━━━━━━━━━━━�
 write_status_json "$MAIN_OVERALL_STATUS"
 log_msg "INFO" "📊 Status written → $STATUS_JSON"
 
+# ── macOS notification on cron completion ─────────────────────────────────────
+if [ "${NOTIFY_ON_COMPLETE:-false}" = "true" ]; then
+    if [ "$MAIN_OVERALL_STATUS" = "SUCCESS" ]; then
+        NOTIF_MSG="✅ Backup finished successfully."
+    else
+        NOTIF_MSG="⚠️ Backup finished with errors — check the error log."
+    fi
+    osascript -e "display notification \"$NOTIF_MSG\" with title \"SourceStream\" sound name \"Glass\"" 2>/dev/null || true
+fi
