@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+    SourceStream Menu Bar Agent LaunchAgent
+    Placeholders are replaced by the installer/launcher at install time:
+        __PYTHON__       → /opt/homebrew/bin/python3  (or /usr/bin/python3)
+        __MENUBAR_PY__   → /Applications/SourceStream.app/Contents/Resources/menubar_agent.py
+        __RES_DIR__      → /Applications/SourceStream.app/Contents/Resources
+        __LOGS_DIR__     → /Users/<name>/.sourcestream/logs
+
+    KeepAlive=false  — menu bar app exits cleanly when the user quits it.
+    RunAtLoad=true   — starts at login automatically.
+    -->
+    <key>Label</key>
+    <string>com.sourcestream.menubar</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>__MENUBAR_PY__</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__RES_DIR__</string>
+
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><false/>
+
+    <key>StandardOutPath</key>
+    <string>__LOGS_DIR__/menubar.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOGS_DIR__/menubar.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+
