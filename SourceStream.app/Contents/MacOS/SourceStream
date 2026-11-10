@@ -117,6 +117,27 @@ if ! launchctl list 2>/dev/null | grep -q "com.sourcestream.server"; then
     launchctl load   "$PLIST_DEST" 2>/dev/null || true
 fi
 
+# ── 3b. Install / refresh Menu Bar Agent LaunchAgent ─────────────────────────
+MENUBAR_PY="$RESOURCES/menubar_agent.py"
+MENUBAR_PLIST_SRC="$BUNDLE_DIR/Library/LaunchAgents/com.sourcestream.menubar.plist"
+MENUBAR_PLIST_DEST="$HOME/Library/LaunchAgents/com.sourcestream.menubar.plist"
+
+if [ -f "$MENUBAR_PLIST_SRC" ] && [ -f "$MENUBAR_PY" ]; then
+    sed \
+        -e "s|__PYTHON__|$PYTHON|g" \
+        -e "s|__MENUBAR_PY__|$MENUBAR_PY|g" \
+        -e "s|__RES_DIR__|$RESOURCES|g" \
+        -e "s|__LOGS_DIR__|$LOGS_DIR|g" \
+        "$MENUBAR_PLIST_SRC" > "$MENUBAR_PLIST_DEST"
+
+    # Only load if PyObjC/AppKit is available (graceful — doesn't fail silently)
+    if "$PYTHON" -c "import AppKit" 2>/dev/null; then
+        if ! launchctl list 2>/dev/null | grep -q "com.sourcestream.menubar"; then
+            launchctl load "$MENUBAR_PLIST_DEST" 2>/dev/null || true
+        fi
+    fi
+fi
+
 # ── 4. Ensure server is responding ───────────────────────────────────────────
 _wait_server() {
     local max=10 i=0

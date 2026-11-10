@@ -200,13 +200,35 @@ sed \
     "$TEMPLATE_PLIST" > "$LAUNCHAGENT"
 ok "LaunchAgent written: $LAUNCHAGENT"
 
-# ── 8. Load LaunchAgent ───────────────────────────────────────────────────────
+# ── 8. Load server LaunchAgent ────────────────────────────────────────────────
 launchctl load "$LAUNCHAGENT" 2>/dev/null || true
 sleep 2
 if launchctl list 2>/dev/null | grep -q "com.sourcestream.server"; then
     ok "LaunchAgent loaded — server starting..."
 else
     wrn "LaunchAgent may not have loaded. Check: launchctl list | grep sourcestream"
+fi
+
+# ── 8b. Install Menu Bar Agent LaunchAgent ────────────────────────────────────
+MENUBAR_TEMPLATE="$INSTALL_APP/Contents/Library/LaunchAgents/com.sourcestream.menubar.plist"
+MENUBAR_PLIST="$LAUNCHAGENT_DIR/com.sourcestream.menubar.plist"
+MENUBAR_PY="$INSTALL_APP/Contents/Resources/menubar_agent.py"
+
+if [ -f "$MENUBAR_TEMPLATE" ] && [ -f "$MENUBAR_PY" ]; then
+    sed \
+        -e "s|__PYTHON__|$PYTHON_PATH|g" \
+        -e "s|__MENUBAR_PY__|$MENUBAR_PY|g" \
+        -e "s|__RES_DIR__|$RES_DIR|g" \
+        -e "s|__LOGS_DIR__|$LOGS_DIR|g" \
+        "$MENUBAR_TEMPLATE" > "$MENUBAR_PLIST"
+    # Only load if PyObjC/AppKit is available
+    if "$PYTHON_PATH" -c "import AppKit" 2>/dev/null; then
+        launchctl load "$MENUBAR_PLIST" 2>/dev/null || true
+        ok "Menu bar agent installed (PyObjC detected)"
+    else
+        ok "Menu bar agent plist installed — PyObjC not found, skipping load"
+        inf "  To enable: pip3 install pyobjc-framework-Cocoa  then reopen SourceStream"
+    fi
 fi
 
 # ── 9. Build Desktop launcher ────────────────────────────────────────────────
