@@ -523,12 +523,14 @@ apply_retention_policy() {
     # Match archives by sanitized label prefix — handles all archive formats
     local SAFE_PREFIX
     SAFE_PREFIX=$(echo "$PREFIX" | tr ' ' '_' | tr -cd '[:alnum:]_-')
-    # Gather all supported archive formats, newest first
+    # Gather all supported archive formats, newest first (ls -1t)
+    # Do NOT pipe through sort -r — ls -1t already gives newest-first;
+    # adding sort -r reverses to oldest-first and then head picks newest to prune (wrong).
     ALL_ARCHIVES=$(ls -1t "$DEST/${SAFE_PREFIX}_"*.tar.gz \
                          "$DEST/${SAFE_PREFIX}_"*.tar.bz2 \
                          "$DEST/${SAFE_PREFIX}_"*.tar.xz \
                          "$DEST/${SAFE_PREFIX}_"*.zip 2>/dev/null \
-                   | grep -v "^ls:" | sort -r)
+                   | grep -v "^ls:")
     # Strip non-digits; default to 0 to guard against "integer expected" errors
     COUNT=$(echo "$ALL_ARCHIVES" | grep -c '.' 2>/dev/null | tr -cd '0-9' | head -c 10)
     COUNT=$(( ${COUNT:-0} + 0 ))   # coerce to integer; also handles empty
@@ -540,7 +542,8 @@ apply_retention_policy() {
 
     local EXCESS=$(( COUNT - KEEP_COUNT ))
     log_msg "INFO" "   📁 Retention: pruning $EXCESS oldest (keeping $KEEP_COUNT)."
-    echo "$ALL_ARCHIVES" | head -n "$EXCESS" | while IFS= read -r OLD_FILE; do
+    # ALL_ARCHIVES is newest-first; tail picks the OLDEST $EXCESS to delete
+    echo "$ALL_ARCHIVES" | tail -n "$EXCESS" | while IFS= read -r OLD_FILE; do
         rm -f "$OLD_FILE" && log_msg "INFO" "   🗑  Pruned: $(basename "$OLD_FILE")" \
                           || log_err "Failed to prune: $OLD_FILE"
     done
@@ -817,7 +820,8 @@ process_backup() {
     if [ "$TAR_EXIT" -eq 0 ]; then
         log_msg "INFO" "   ✅ tar completed cleanly (exit 0)."
     elif [ "$TAR_EXIT" -eq 1 ]; then
-        log_msg "WARN" "   ⚠️  tar exit 1: some files skipped (changed during run or permission-denied). Continuing..."
+        local _TOOL; [ "$ARCH_EXT" = "zip" ] && _TOOL="zip" || _TOOL="tar"
+        log_msg "WARN" "   ⚠️  $_TOOL exit 1: some files skipped (changed during run or permission-denied). Continuing..."
     else
         # Exit 2+: only abort if the archive is missing or empty
         if [ -f "$STAGE_PATH" ] && [ -s "$STAGE_PATH" ]; then
