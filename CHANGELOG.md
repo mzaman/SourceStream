@@ -5,6 +5,40 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ---
 
+## [1.0.15] — 2026-11-12
+
+### Added
+- **Snapshots page** — new nav item (📁 Snapshots) between Archives and Policies.
+  Source Folders moved from Settings into this dedicated page. Each source shows its
+  attached policy badge; clicking it opens the policy editor.
+- **Policy-per-source** — when adding a source folder, choose an existing named policy
+  from the dropdown or create a new policy on the fly (enters a name, creates it,
+  opens the editor). Policy entry stored as `|policy=PATH` in the source config entry.
+- **Collapsible policy sections** — Retention / Files / Error Handling / Compression /
+  Scheduling / Actions sections are now individually expand/collapse toggles (▼/▲).
+  State is preserved during the session.
+- **Policy Name field** — each policy has an optional human-readable name (stored as
+  `__name` meta key). Shown in the policy list table, Snapshots source badges, and the
+  Policies page Schedule column summary.
+- **Reactive Effective column** — the Effective column in the policy editor now live-
+  mirrors the Defined input as you type/select. When a field is blank (inheriting),
+  Effective shows the global/default value and "Defined by [Global Policy]" link.
+  When a value is explicitly set, it shows "✦ Defined by this policy".
+- **Policy list: Schedule column** — summarises each policy's schedule at a glance
+  (cron expression, interval, or Manual-only pill).
+- **Policy name + path header** — policy editor now shows an editable Policy Name
+  input and the bound path in a persistent header bar above the sections.
+
+### Changed
+- `/api/policies` now returns `{ok, policies, meta}` — `meta` contains `{path:{name}}`.
+- `/api/policies/resolve` now returns `{defined, effective, global, is_global}` directly
+  (fields are top-level, no longer nested under `resolved`).
+- `POST /api/policies/save` now accepts optional `name` field stored as `__name`.
+- `resolve_policy()` strips `__name` from effective/defined/global fields.
+- Bumped APP_VERSION to 1.0.15.
+
+---
+
 ## [1.0.14] — 2026-11-12
 
 ### Fixed

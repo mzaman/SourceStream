@@ -143,6 +143,35 @@ tbody tr:hover{background:rgba(255,255,255,.025)}
 tbody td{padding:9px 14px;color:var(--dim)}
 tbody td:first-child{color:var(--text);font-family:monospace;font-size:.74rem}
 .no-data{text-align:center;color:var(--muted);padding:28px;font-size:.82rem}
+/* ── Collapsible policy sections ── */
+.pol-sec-header{display:flex;align-items:center;justify-content:space-between;
+  font-weight:700;font-size:.85rem;color:var(--accent);padding:10px 0 8px;
+  border-bottom:1px solid var(--border);cursor:pointer;user-select:none;
+  margin-bottom:0;gap:8px}
+.pol-sec-header:hover{color:var(--blue)}
+.pol-sec-toggle{font-size:.7rem;transition:transform .2s;display:inline-block;flex-shrink:0}
+.pol-sec-toggle.open{transform:rotate(180deg)}
+.pol-sec-body{overflow:hidden;transition:max-height .25s ease}
+/* ── Policy field rows ── */
+.pol-field-row{display:grid;grid-template-columns:minmax(180px,28%) 1fr 1fr;
+  border-top:1px solid var(--border);font-size:.8rem}
+.pol-field-row>div{padding:8px 10px}
+.pol-field-label{font-weight:600;color:var(--text)}
+.pol-field-desc{font-size:.7rem;color:var(--muted);margin-top:2px}
+.pol-eff-mirror{color:var(--dim);font-size:.78rem}
+.pol-src-badge-defined{color:var(--green);font-size:.72rem}
+.pol-src-badge-global{color:var(--muted);font-size:.72rem}
+.pol-src-badge-global a{color:var(--accent);text-decoration:none}
+.pol-src-badge-global a:hover{text-decoration:underline}
+/* ── Snapshot source cards ── */
+.snap-src-card{border:1px solid var(--border);border-radius:var(--rs);padding:12px 14px;
+  margin-bottom:10px;background:var(--card2);transition:border-color .15s}
+.snap-src-card:hover{border-color:var(--blue)}
+.snap-src-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.snap-src-path{font-family:monospace;font-size:.75rem;color:var(--dim);margin-top:3px}
+.snap-src-policy-badge{font-size:.68rem;padding:2px 7px;border-radius:4px;
+  background:rgba(59,130,246,.12);color:var(--blue);cursor:pointer}
+.snap-src-policy-badge:hover{background:rgba(59,130,246,.22)}
 
 /* ── LOG ── */
 .log-wrap{background:var(--card2);border:1px solid var(--border);border-radius:var(--rs);
@@ -345,6 +374,9 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
     <div class="nav-section">Data</div>
     <div class="nav-item" data-page="archives" onclick="go('archives')">
       <span class="nav-icon">🗄️</span>Archives
+    </div>
+    <div class="nav-item" data-page="snapshots" onclick="go('snapshots')">
+      <span class="nav-icon">📁</span>Snapshots
     </div>
     <div class="nav-item" data-page="policies" onclick="go('policies')">
       <span class="nav-icon">📋</span>Policies
@@ -636,18 +668,83 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
       </div>
     </div>
 
+    <!-- ══════════════ SNAPSHOTS ══════════════ -->
+    <div class="page" id="pg-snapshots">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:flex-start">
+
+        <!-- Source Folders -->
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title">📁 Source Folders</span>
+            <button class="btn btn-muted" onclick="showSnapshotAddSource()">+ Add Folder</button>
+          </div>
+          <div id="snap-sources-list"><div class="empty">Loading…</div></div>
+
+          <!-- Add source form -->
+          <div id="snap-add-source-form" style="display:none" class="mt">
+            <div class="form-group">
+              <label class="form-label">Folder path</label>
+              <div class="flex" style="gap:8px;margin-bottom:8px">
+                <input class="form-input" id="snap-src-path" placeholder="/Users/yourname/Projects/MyApp" style="flex:1">
+                <button class="btn btn-muted" onclick="browseFolderFor('snap-src-path','snap-src-name')" style="flex-shrink:0" title="Browse…">📂</button>
+              </div>
+              <label class="form-label">Display name</label>
+              <input class="form-input w-full" id="snap-src-name" placeholder="MyApp" style="margin-bottom:8px">
+              <label class="form-label">Keep (archives) — 0 = use policy</label>
+              <input class="form-input" id="snap-src-keep" type="number" min="0" max="99" placeholder="0" style="width:80px;margin-bottom:12px">
+              <label class="form-label">Attach Policy</label>
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+                <select class="form-input" id="snap-src-policy" style="flex:1">
+                  <option value="">— Use Global Policy —</option>
+                </select>
+                <button class="btn btn-muted" style="font-size:.75rem;white-space:nowrap" onclick="quickAddPolicyForSource()">+ New Policy</button>
+              </div>
+            </div>
+            <div class="flex">
+              <button class="btn btn-success" onclick="addSnapshotSource()">Add Source</button>
+              <button class="btn btn-muted" onclick="hideSnapshotAddSource()">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Quick suggestions -->
+          <div id="snap-suggestions-wrap" style="display:none">
+            <div class="section-label mt" style="margin-top:14px">💡 Quick Add — Common Folders</div>
+            <div class="suggest-grid" id="snap-suggestions-grid"></div>
+          </div>
+        </div>
+
+        <!-- Right: snapshot info + recent archives per source -->
+        <div>
+          <div class="panel">
+            <div class="panel-head">
+              <span class="panel-title">ℹ️ Snapshot Overview</span>
+              <button class="btn btn-muted" onclick="loadSnapshots()">↻ Refresh</button>
+            </div>
+            <div id="snap-overview"><div class="empty">Select a source to view snapshot details</div></div>
+          </div>
+
+          <div class="panel" style="margin-top:16px">
+            <div class="panel-head">
+              <span class="panel-title">🕐 Recent Snapshots</span>
+            </div>
+            <div id="snap-recent-list"><div class="empty">Loading…</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ══════════════ POLICIES ══════════════ -->
     <div class="page" id="pg-policies">
       <div style="display:flex;gap:16px;align-items:flex-start;margin-bottom:16px">
         <div class="panel" style="flex:1">
           <div class="panel-head">
             <span class="panel-title">📋 Backup Policies</span>
-            <button class="btn btn-primary" onclick="showAddPolicyDialog()" style="font-size:.75rem">+ Add Path Policy</button>
+            <button class="btn btn-primary" onclick="showAddPolicyDialog()" style="font-size:.75rem">+ Add Policy</button>
           </div>
           <div class="tbl-wrap">
             <table>
-              <thead><tr><th>Path</th><th>Type</th><th>Defined Fields</th><th>Actions</th></tr></thead>
-              <tbody id="pol-list-tbody"><tr><td colspan="4" class="no-data">Loading…</td></tr></tbody>
+              <thead><tr><th>Path</th><th>Name</th><th>Type</th><th>Defined Fields</th><th>Schedule</th><th>Actions</th></tr></thead>
+              <tbody id="pol-list-tbody"><tr><td colspan="6" class="no-data">Loading…</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -660,6 +757,17 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
           <div style="display:flex;gap:8px">
             <button class="btn btn-primary" onclick="savePolicyEditor()">💾 Save Policy</button>
             <button class="btn btn-muted" onclick="closePolicyEditor()">✕ Close</button>
+          </div>
+        </div>
+        <!-- Policy name + path header -->
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:200px">
+            <label style="font-size:.78rem;font-weight:600;color:var(--dim);white-space:nowrap">Policy Name</label>
+            <input class="form-input" id="pol-name-inp" placeholder="e.g. Conservative Retention" style="flex:1;padding:5px 10px;font-size:.8rem">
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:200px">
+            <label style="font-size:.78rem;font-weight:600;color:var(--dim);white-space:nowrap">Path</label>
+            <code id="pol-path-display" style="font-size:.8rem;padding:4px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">*</code>
           </div>
         </div>
         <div id="pol-editor-body" style="padding:16px"></div>
@@ -1133,7 +1241,8 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 const BASE = 'http://127.0.0.1:7474';
 const PAGE_TITLES = {
   dashboard:'Dashboard', backup:'Run Backup', archives:'Archives',
-  policies:'Policies', logs:'Logs', health:'Health Check', schedule:'Schedule', settings:'Settings',
+  snapshots:'Snapshots', policies:'Policies', logs:'Logs', health:'Health Check',
+  schedule:'Schedule', settings:'Settings',
   history:'Backup History', notes:'Notes & System Info', remotes:'Remote Destinations'
 };
 let currentPage = 'dashboard';
@@ -1211,7 +1320,8 @@ function go(page){
   document.querySelector(`[data-page="${page}"]`).classList.add('active');
   $('page-title').textContent = PAGE_TITLES[page]||page;
   currentPage = page;
-  if(page==='archives') loadArchives();
+  if(page==='archives')  loadArchives();
+  if(page==='snapshots') loadSnapshots();
   if(page==='policies') loadPolicies();
   if(page==='logs')     loadLogs();
   if(page==='health')   runHealth();
@@ -2410,9 +2520,11 @@ async function testRemoteCLI(){
 }
 
 // ── Policies ───────────────────────────────────────────────────────────────────
-let _policies = [];
+let _policies = {};   // {path: {fields…}}
+let _policiesMeta = {}; // {path: {name:…}}
 let _curPolPath = null;
 let _polData = null;
+let _polSecOpen = {};  // {secKey: bool} — collapsed state
 
 const POL_SECTIONS = [
   { key: 'retention', label: '📦 Snapshot Retention', fields: [
@@ -2446,7 +2558,7 @@ const POL_SECTIONS = [
   { key: 'scheduling', label: '📅 Scheduling', fields: [
     { k:'scheduleInterval', label:'Snapshot Frequency', desc:'How frequently to create backups', type:'select',
       options:['','600','900','1200','1800','3600','10800','21600','43200'],
-      labels:['(none)','Every 10 min','Every 15 min','Every 20 min','Every 30 min','Every hour','Every 3 hours','Every 6 hours','Every 12 hours'] },
+      labels:['(none — use cron)','Every 10 min','Every 15 min','Every 20 min','Every 30 min','Every hour','Every 3 hours','Every 6 hours','Every 12 hours'] },
     { k:'scheduleCron',  label:'Cron Expression', desc:'UNIX crontab syntax (e.g. 0 2 * * *)', type:'text', placeholder:'0 2 * * *' },
     { k:'runMissed',     label:'Run Missed Snapshots on Startup', desc:'Run any missed backups when server starts', type:'bool' },
     { k:'manualOnly',    label:'Manual Snapshots Only', desc:'Disable all scheduled backups — run manually only', type:'bool' },
@@ -2463,26 +2575,50 @@ const POL_SECTIONS = [
   ]},
 ];
 
+// Initialize all sections as open
+POL_SECTIONS.forEach(s => _polSecOpen[s.key] = true);
+
 async function loadPolicies(){
-  $('pol-list-tbody').innerHTML='<tr><td colspan="4" class="no-data">Loading…</td></tr>';
+  $('pol-list-tbody').innerHTML='<tr><td colspan="6" class="no-data">Loading…</td></tr>';
   const r = await api('GET','/api/policies');
-  _policies = r||[];
+  _policies = (r && r.ok) ? (r.policies||{}) : {};
+  _policiesMeta = (r && r.ok) ? (r.meta||{}) : {};
   // Always ensure global exists
-  if(!_policies.find(p=>p.path==='*')) _policies.unshift({path:'*',is_global:true,defined_keys:[],defined:{},effective:{}});
+  if(!('*' in _policies)) _policies['*'] = {};
   renderPolicyList();
 }
 
+function _polScheduleSummary(fields){
+  if(fields.manualOnly==='true') return pill('Manual only','p-r');
+  if(fields.scheduleCron) return `<code style="font-size:.7rem">${esc(fields.scheduleCron)}</code>`;
+  const lbl={600:'10 min',900:'15 min',1200:'20 min',1800:'30 min',3600:'1 hr',10800:'3 hr',21600:'6 hr',43200:'12 hr'};
+  if(fields.scheduleInterval && lbl[fields.scheduleInterval]) return pill('Every '+lbl[fields.scheduleInterval],'p-b');
+  return '<span style="color:var(--muted);font-size:.72rem">—</span>';
+}
+
 function renderPolicyList(){
-  if(!_policies.length){ $('pol-list-tbody').innerHTML='<tr><td colspan="4" class="no-data">No policies</td></tr>'; return; }
-  $('pol-list-tbody').innerHTML = _policies.map(p=>`<tr>
-    <td style="font-family:monospace;font-size:.82rem">${p.is_global?'<strong>* (Global)</strong>':esc(p.path)}</td>
-    <td>${p.is_global?pill('Global','p-p'):pill('Path','p-b')}</td>
-    <td style="font-size:.75rem;color:var(--dim)">${(p.defined_keys||[]).length} defined field(s)</td>
-    <td style="white-space:nowrap">
-      <button class="btn btn-muted" style="font-size:.72rem;padding:3px 8px" onclick="editPolicy(${JSON.stringify(esc(p.path))})">✏️ Edit</button>
-      ${!p.is_global?`<button class="btn btn-muted" style="font-size:.72rem;padding:3px 8px;color:#f87171" onclick="deletePolicy(${JSON.stringify(esc(p.path))})">🗑</button>`:''}
-    </td>
-  </tr>`).join('');
+  const paths = Object.keys(_policies);
+  if(!paths.length){ $('pol-list-tbody').innerHTML='<tr><td colspan="6" class="no-data">No policies</td></tr>'; return; }
+  // global first, then alphabetical
+  const sorted = paths.sort((a,b)=>a==='*'?-1:b==='*'?1:a.localeCompare(b));
+  $('pol-list-tbody').innerHTML = sorted.map(path=>{
+    const isGlobal = path==='*';
+    const fields   = _policies[path]||{};
+    const name     = _policiesMeta[path]?.name||'';
+    const defCount = Object.keys(fields).filter(k=>k!=='__name').length;
+    const sched    = _polScheduleSummary(fields);
+    return `<tr>
+      <td style="font-family:monospace;font-size:.82rem">${isGlobal?'<strong>* (Global)</strong>':esc(path)}</td>
+      <td style="font-size:.75rem;color:var(--dim)">${esc(name)||'<em style="color:var(--muted)">unnamed</em>'}</td>
+      <td>${isGlobal?pill('Global','p-p'):pill('Path','p-b')}</td>
+      <td style="font-size:.75rem;color:var(--dim)">${defCount} defined field(s)</td>
+      <td>${sched}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-muted" style="font-size:.72rem;padding:3px 8px" onclick="editPolicy(${JSON.stringify(path)})">✏️ Edit</button>
+        ${!isGlobal?`<button class="btn btn-muted" style="font-size:.72rem;padding:3px 8px;color:#f87171" onclick="deletePolicy(${JSON.stringify(path)})">🗑</button>`:''}
+      </td>
+    </tr>`;
+  }).join('');
 }
 
 async function editPolicy(path){
@@ -2490,69 +2626,166 @@ async function editPolicy(path){
   const r = await api('GET',`/api/policies/resolve?path=${encodeURIComponent(path)}`);
   if(!r){ toast('Failed to load policy','error'); return; }
   _polData = r;
-  $('pol-editor-title').textContent = path==='*' ? '🌍 Global Policy' : `📋 Policy: ${path}`;
+  const isGlobal = path==='*';
+  $('pol-editor-title').textContent = isGlobal ? '🌍 Global Policy' : `📋 Policy: ${path}`;
+  $('pol-path-display').textContent = path;
+  const name = _policiesMeta[path]?.name || _policies[path]?.__name || '';
+  $('pol-name-inp').value = name;
   renderPolicyEditor(r);
   $('pol-editor-panel').style.display = '';
   $('pol-editor-panel').scrollIntoView({behavior:'smooth'});
 }
 
+function togglePolSection(key){
+  _polSecOpen[key] = !_polSecOpen[key];
+  const body = document.getElementById('pol-sec-body-'+key);
+  const icon = document.getElementById('pol-sec-icon-'+key);
+  if(_polSecOpen[key]){
+    body.style.maxHeight = body.scrollHeight + 'px';
+    icon.classList.add('open');
+  } else {
+    body.style.maxHeight = '0px';
+    icon.classList.remove('open');
+  }
+}
+
+function _polBuildInput(f, curVal, isDefined){
+  if(f.type==='bool'){
+    return `<div style="display:flex;gap:10px;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:.78rem">
+        <input type="radio" name="pol_${f.k}" value="" ${!isDefined?'checked':''}> inherit
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:.78rem">
+        <input type="radio" name="pol_${f.k}" value="true" ${isDefined&&curVal==='true'?'checked':''}> yes
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:.78rem">
+        <input type="radio" name="pol_${f.k}" value="false" ${isDefined&&curVal==='false'?'checked':''}> no
+      </label>
+    </div>`;
+  } else if(f.type==='select'){
+    const opts = (f.options||[]).map((o,i)=>`<option value="${esc(o)}" ${curVal===o?'selected':''}>${esc((f.labels||[])[i]||o)}</option>`).join('');
+    return `<select id="pol_${f.k}" onchange="polEffMirror('${f.k}',this.value,${JSON.stringify(f)})" style="padding:4px 8px;font-size:.78rem;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px;width:100%"><option value="">— inherit —</option>${opts}</select>`;
+  } else if(f.type==='textarea'){
+    return `<textarea id="pol_${f.k}" rows="3" oninput="polEffMirror('${f.k}',this.value,${JSON.stringify(f)})" style="width:100%;padding:4px 6px;font-size:.75rem;font-family:monospace;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px;resize:vertical" placeholder="(inherit)">${esc(curVal)}</textarea>`;
+  } else {
+    return `<input type="${f.type==='number'?'number':'text'}" id="pol_${f.k}" value="${esc(curVal)}" oninput="polEffMirror('${f.k}',this.value,${JSON.stringify(f)})" placeholder="(inherit)" style="padding:4px 8px;font-size:.78rem;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px;width:100%">`;
+  }
+}
+
+function polEffMirror(key, val, fDef){
+  // Update effective column live when user types in Defined input
+  const effEl = document.getElementById('pol-eff-'+key);
+  const srcEl = document.getElementById('pol-src-'+key);
+  if(!effEl || !srcEl) return;
+  const isGlobal = _curPolPath === '*';
+  if(val && val !== ''){
+    effEl.textContent = val;
+    srcEl.innerHTML = '<span class="pol-src-badge-defined">✦ Defined by this policy</span>';
+  } else {
+    // Show inherited value
+    const globalVal = (_polData?.global||{})[key] ?? '';
+    effEl.textContent = globalVal || '—';
+    if(isGlobal){
+      srcEl.innerHTML = `<span style="color:var(--dim);font-size:.72rem">Default: ${esc(String(globalVal))}</span>`;
+    } else {
+      srcEl.innerHTML = `<span class="pol-src-badge-global">↑ <a href="#" onclick="editPolicy('*');return false">Global Policy</a></span>`;
+    }
+  }
+}
+
+function polBoolMirror(key, val){
+  // For radio buttons — called via onchange
+  const effEl = document.getElementById('pol-eff-'+key);
+  const srcEl = document.getElementById('pol-src-'+key);
+  if(!effEl || !srcEl) return;
+  const isGlobal = _curPolPath === '*';
+  if(val !== ''){
+    effEl.textContent = val;
+    srcEl.innerHTML = '<span class="pol-src-badge-defined">✦ Defined by this policy</span>';
+  } else {
+    const globalVal = (_polData?.global||{})[key] ?? '';
+    effEl.textContent = globalVal || '—';
+    if(isGlobal){
+      srcEl.innerHTML = `<span style="color:var(--dim);font-size:.72rem">Default: ${esc(String(globalVal))}</span>`;
+    } else {
+      srcEl.innerHTML = `<span class="pol-src-badge-global">↑ <a href="#" onclick="editPolicy('*');return false">Global Policy</a></span>`;
+    }
+  }
+}
+
 function renderPolicyEditor(data){
-  const isGlobal = data.is_global;
+  const isGlobal = _curPolPath === '*';
   const defined  = data.defined  || {};
   const effective= data.effective|| {};
-  const deflt    = data.default  || {};
+  const global_  = data.global   || {};
 
   let html = '';
   for(const sec of POL_SECTIONS){
-    html += `<div style="margin-bottom:24px">
-      <div style="font-weight:700;font-size:.85rem;color:var(--accent);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border)">${sec.label}</div>
-      <table style="width:100%;border-collapse:collapse;font-size:.82rem">
-        <thead><tr>
-          <th style="text-align:left;padding:4px 8px;color:var(--dim);font-weight:600;width:30%">Field</th>
-          <th style="text-align:left;padding:4px 8px;color:var(--dim);font-weight:600;width:30%">Defined</th>
-          <th style="text-align:left;padding:4px 8px;color:var(--dim);font-weight:600;width:20%">Effective</th>
-          <th style="text-align:left;padding:4px 8px;color:var(--dim);font-weight:600">Source</th>
-        </tr></thead>
-        <tbody>`;
+    const isOpen = _polSecOpen[sec.key] !== false;
+    html += `
+    <div style="margin-bottom:4px;border:1px solid var(--border);border-radius:var(--rs);overflow:hidden">
+      <div class="pol-sec-header" onclick="togglePolSection('${sec.key}')">
+        <span>${sec.label}</span>
+        <span class="pol-sec-toggle${isOpen?' open':''}" id="pol-sec-icon-${sec.key}">▼</span>
+      </div>
+      <div class="pol-sec-body" id="pol-sec-body-${sec.key}" style="max-height:${isOpen?'2000px':'0px'}">
+        <!-- Column headers -->
+        <div style="display:grid;grid-template-columns:minmax(180px,28%) 1fr 1fr;background:var(--card2);border-top:1px solid var(--border)">
+          <div style="padding:6px 10px;font-size:.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Field</div>
+          <div style="padding:6px 10px;font-size:.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Defined</div>
+          <div style="padding:6px 10px;font-size:.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Effective</div>
+        </div>`;
+
     for(const f of sec.fields){
       const isDefined  = f.k in defined;
-      const defVal     = deflt[f.k] ?? '';
+      const defVal     = global_[f.k] ?? '';
       const effVal     = effective[f.k] ?? defVal;
       const curVal     = isDefined ? defined[f.k] : '';
-      const srcBadge   = isDefined
-        ? '<span style="color:var(--green);font-size:.72rem">✦ Defined by this policy</span>'
-        : (isGlobal
-            ? `<span style="color:var(--dim);font-size:.72rem">Default: ${esc(String(defVal))}</span>`
-            : `<span style="color:var(--dim);font-size:.72rem">↑ <a href="#" onclick="editPolicy('*');return false" style="color:var(--accent)">Global Policy</a></span>`);
-      let inputHtml = '';
+
+      let srcBadgeHtml;
+      if(isDefined){
+        srcBadgeHtml = '<span class="pol-src-badge-defined">✦ Defined by this policy</span>';
+      } else if(isGlobal){
+        srcBadgeHtml = `<span style="color:var(--dim);font-size:.72rem">Default: ${esc(String(defVal))}</span>`;
+      } else {
+        srcBadgeHtml = `<span class="pol-src-badge-global">↑ <a href="#" onclick="editPolicy('*');return false">Global Policy</a></span>`;
+      }
+
+      let inputHtml;
       if(f.type==='bool'){
-        inputHtml = `<div style="display:flex;gap:6px">
-          <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-            <input type="radio" name="pol_${f.k}" value="" ${!isDefined?'checked':''}> inherit
+        inputHtml = `<div style="display:flex;gap:10px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:.78rem">
+            <input type="radio" name="pol_${f.k}" value="" onchange="polBoolMirror('${f.k}','')" ${!isDefined?'checked':''}> inherit
           </label>
-          <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-            <input type="radio" name="pol_${f.k}" value="true" ${isDefined&&curVal==='true'?'checked':''}> yes
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:.78rem">
+            <input type="radio" name="pol_${f.k}" value="true" onchange="polBoolMirror('${f.k}','true')" ${isDefined&&curVal==='true'?'checked':''}> yes
           </label>
-          <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-            <input type="radio" name="pol_${f.k}" value="false" ${isDefined&&curVal==='false'?'checked':''}> no
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:.78rem">
+            <input type="radio" name="pol_${f.k}" value="false" onchange="polBoolMirror('${f.k}','false')" ${isDefined&&curVal==='false'?'checked':''}> no
           </label>
         </div>`;
       } else if(f.type==='select'){
-        const opts = (f.options||[]).map((o,i)=>`<option value="${esc(o)}" ${curVal===o||(!isDefined&&!o&&!isGlobal)?'selected':''}>${esc((f.labels||[])[i]||o)}</option>`).join('');
-        inputHtml = `<select id="pol_${f.k}" style="padding:3px 6px;font-size:.78rem;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px"><option value="">— inherit —</option>${opts}</select>`;
+        const opts = (f.options||[]).map((o,i)=>`<option value="${esc(o)}" ${curVal===o?'selected':''}>${esc((f.labels||[])[i]||o)}</option>`).join('');
+        inputHtml = `<select id="pol_${f.k}" onchange="polEffMirror('${f.k}',this.value,${JSON.stringify(f)})" style="padding:4px 8px;font-size:.78rem;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px;width:100%"><option value="">— inherit —</option>${opts}</select>`;
       } else if(f.type==='textarea'){
-        inputHtml = `<textarea id="pol_${f.k}" rows="3" style="width:100%;padding:4px 6px;font-size:.75rem;font-family:monospace;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px;resize:vertical" placeholder="(inherit)">${esc(curVal)}</textarea>`;
+        inputHtml = `<textarea id="pol_${f.k}" rows="3" oninput="polEffMirror('${f.k}',this.value,${JSON.stringify(f)})" style="width:100%;padding:4px 6px;font-size:.75rem;font-family:monospace;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px;resize:vertical" placeholder="(inherit)">${esc(curVal)}</textarea>`;
       } else {
-        inputHtml = `<input type="${f.type==='number'?'number':'text'}" id="pol_${f.k}" value="${esc(curVal)}" placeholder="(inherit)" style="padding:4px 8px;font-size:.78rem;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px;width:100%">`;
+        inputHtml = `<input type="${f.type==='number'?'number':'text'}" id="pol_${f.k}" value="${esc(curVal)}" oninput="polEffMirror('${f.k}',this.value,${JSON.stringify(f)})" placeholder="(inherit)" style="padding:4px 8px;font-size:.78rem;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px;width:100%">`;
       }
-      html += `<tr style="border-top:1px solid var(--border)">
-        <td style="padding:8px"><div style="font-weight:600">${esc(f.label)}</div><div style="color:var(--dim);font-size:.7rem;margin-top:2px">${esc(f.desc)}</div></td>
-        <td style="padding:8px">${inputHtml}</td>
-        <td style="padding:8px;color:var(--dim);font-family:monospace;font-size:.75rem">${esc(String(effVal))}</td>
-        <td style="padding:8px">${srcBadge}</td>
-      </tr>`;
+
+      html += `<div class="pol-field-row">
+        <div>
+          <div class="pol-field-label">${esc(f.label)}</div>
+          <div class="pol-field-desc">${esc(f.desc)}</div>
+        </div>
+        <div>${inputHtml}</div>
+        <div>
+          <div class="pol-eff-mirror" id="pol-eff-${f.k}">${esc(String(effVal||'—'))}</div>
+          <div style="margin-top:4px" id="pol-src-${f.k}">${srcBadgeHtml}</div>
+        </div>
+      </div>`;
     }
-    html += `</tbody></table></div>`;
+    html += `</div></div>`;
   }
   $('pol-editor-body').innerHTML = html;
 }
@@ -2564,14 +2797,15 @@ async function savePolicyEditor(){
     for(const f of sec.fields){
       if(f.type==='bool'){
         const checked = document.querySelector(`input[name="pol_${f.k}"]:checked`);
-        if(checked) fields[f.k] = checked.value; // '' = inherit = not stored
+        if(checked && checked.value !== '') fields[f.k] = checked.value;
       } else {
-        const el = $(f.type==='select'?`pol_${f.k}`:`pol_${f.k}`);
-        if(el) fields[f.k] = el.value;
+        const el = $(`pol_${f.k}`);
+        if(el && el.value.trim()) fields[f.k] = el.value.trim();
       }
     }
   }
-  const r = await api('POST','/api/policies/save',{path:_curPolPath, fields});
+  const name = $('pol-name-inp') ? $('pol-name-inp').value.trim() : '';
+  const r = await api('POST','/api/policies/save',{path:_curPolPath, fields, name});
   if(r && r.ok){ toast('✅ Policy saved','success'); loadPolicies(); editPolicy(_curPolPath); }
   else toast('❌ Save failed: '+(r&&r.error||'?'),'error');
 }
@@ -2589,9 +2823,170 @@ async function deletePolicy(path){
 }
 
 function showAddPolicyDialog(){
-  const path = prompt('Enter the source path to create a policy for:\n(e.g. /Users/masud/Movies)');
-  if(!path || !path.trim()) return;
-  editPolicy(path.trim());
+  const path = prompt('Enter the source path to create a policy for:\n(e.g. /Users/masud/Movies)\n\nLeave blank to create a named reusable policy with no path binding:');
+  if(path === null) return;
+  const p = path.trim() || ('policy-'+ Date.now());
+  editPolicy(p);
+}
+
+// ── Snapshots ───────────────────────────────────────────────────────────────────
+let _snapSources = [];
+
+async function loadSnapshots(){
+  const [settR, polR] = await Promise.all([
+    api('GET','/api/config'),
+    api('GET','/api/policies'),
+  ]);
+  if(!settR) return;
+  _snapSources = settR.sources || [];
+  // Sync policy meta so badges show names
+  if(polR && polR.ok){
+    _policies    = polR.policies || {};
+    _policiesMeta= polR.meta     || {};
+  }
+  renderSnapSources();
+  renderSnapRecent();
+
+  // Populate policy dropdown
+  _populateSnapPolicyDropdown(polR);
+
+  // Show suggestions if no sources yet
+  if(_snapSources.length === 0){
+    const sugg = await api('GET','/api/suggest-folders') || [];
+    if(sugg.length){
+      $('snap-suggestions-wrap').style.display='';
+      $('snap-suggestions-grid').innerHTML = sugg.map(s=>`
+        <button class="suggest-btn" onclick="quickAddSnapSuggestion('${esc(s.path)}','${esc(s.label)}')">
+          <span class="suggest-icon">📁</span>
+          <span class="suggest-label">${esc(s.label)}</span>
+          <span class="suggest-path">${esc(s.path)}</span>
+        </button>`).join('');
+    }
+  } else {
+    $('snap-suggestions-wrap').style.display='none';
+  }
+}
+
+function _populateSnapPolicyDropdown(polR){
+  const policies = (polR && polR.ok) ? (polR.policies||{}) : {};
+  const meta     = (polR && polR.ok) ? (polR.meta||{})     : {};
+  const sel = $('snap-src-policy');
+  if(!sel) return;
+  const paths = Object.keys(policies).filter(p=>p!=='*').sort();
+  sel.innerHTML = '<option value="">— Use Global Policy —</option>' +
+    paths.map(p=>`<option value="${esc(p)}">${esc(meta[p]?.name||p)}</option>`).join('');
+}
+
+
+function renderSnapSources(){
+  const el = $('snap-sources-list');
+  if(!_snapSources.length){
+    el.innerHTML='<div class="empty">No source folders configured yet.<br><span style="font-size:.75rem;color:var(--muted)">Click "+ Add Folder" to get started.</span></div>';
+    return;
+  }
+  el.innerHTML = _snapSources.map((s,i)=>{
+    const parts = s.split('|');
+    const path = parts[0];
+    const label = parts[1] || path.split('/').pop();
+    const keep  = parts[2] ? parts[2].replace('keep=','') : '0';
+    const policyPath = parts[3] ? parts[3].replace('policy=','') : '';
+    const policyName = policyPath
+      ? (_policiesMeta[policyPath]?.name || policyPath)
+      : 'Global Policy';
+    return `<div class="snap-src-card">
+      <div class="snap-src-card-head">
+        <div>
+          <div style="font-weight:600;font-size:.82rem">${esc(label)}</div>
+          <div class="snap-src-path">${esc(path)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="snap-src-policy-badge" onclick="editPolicy('${esc(policyPath||'*')}')" title="Click to edit policy">📋 ${esc(policyName)}</span>
+          ${keep!=='0'?`<span class="pill p-b" style="font-size:.68rem">Keep: ${esc(keep)}</span>`:''}
+          <button class="btn btn-muted" style="font-size:.7rem;padding:2px 8px" onclick="removeSnapshotSource(${i})">🗑</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function renderSnapRecent(){
+  const r = await api('GET','/api/archives');
+  const archives = Array.isArray(r) ? r : [];
+  const el = $('snap-recent-list');
+  if(!archives.length){
+    el.innerHTML='<div class="empty">No archives yet</div>';
+    return;
+  }
+  // Group by source label
+  const grouped = {};
+  archives.forEach(a=>{
+    const src = a.source || a.name.replace(/_\d{8}_\d{6}\..*$/,'');
+    if(!grouped[src]) grouped[src]=[];
+    grouped[src].push(a);
+  });
+  el.innerHTML = Object.entries(grouped).map(([src,arcs])=>`
+    <div style="margin-bottom:12px">
+      <div style="font-size:.75rem;font-weight:600;color:var(--dim);margin-bottom:4px">📁 ${esc(src)}</div>
+      ${arcs.slice(0,3).map(a=>`
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;border-radius:4px;background:var(--card2);margin-bottom:3px;font-size:.75rem">
+          <span style="font-family:monospace;color:var(--dim)">${esc(a.name)}</span>
+          <span style="color:var(--muted)">${fmtBytes(a.size_bytes||0)} · ${esc(a.age||'')}</span>
+        </div>`).join('')}
+    </div>`).join('');
+}
+
+function showSnapshotAddSource(){
+  $('snap-add-source-form').style.display='';
+  $('snap-suggestions-wrap').style.display='none';
+  // Refresh policy dropdown with latest policies
+  api('GET','/api/policies').then(r=>_populateSnapPolicyDropdown(r));
+}
+function hideSnapshotAddSource(){
+  $('snap-add-source-form').style.display='none';
+  $('snap-src-path').value='';
+  $('snap-src-name').value='';
+  $('snap-src-keep').value='';
+}
+
+async function addSnapshotSource(){
+  const p=$('snap-src-path').value.trim();
+  const n=$('snap-src-name').value.trim()||p.split('/').pop();
+  if(!p){ toast('Please enter a folder path','error'); return; }
+  const keep = parseInt($('snap-src-keep').value||'0')||0;
+  const policyPath = $('snap-src-policy')?.value||'';
+  let entry = `${p}|${n}`;
+  if(keep>0 || policyPath) entry+=`|keep=${keep}`;
+  if(policyPath) entry+=`|policy=${policyPath}`;
+  const r = await api('POST','/api/sources/add',{entry});
+  if(r&&r.ok){ toast('Source added','success'); hideSnapshotAddSource(); loadSnapshots(); }
+  else toast('❌ Failed: '+(r&&r.error||'?'),'error');
+}
+
+async function removeSnapshotSource(idx){
+  const parts = (_snapSources[idx]||'').split('|');
+  const path = parts[0];
+  if(!confirm(`Remove source:\n${path}`)) return;
+  const r = await api('POST','/api/sources/remove',{path});
+  if(r&&r.ok){ toast('Source removed','success'); loadSnapshots(); }
+}
+function quickAddSnapSuggestion(path, label){
+  $('snap-src-path').value=path;
+  $('snap-src-name').value=label;
+  showSnapshotAddSource();
+}
+
+async function quickAddPolicyForSource(){
+  const name = prompt('Policy name (for reuse):');
+  if(!name) return;
+  const pathForPolicy = $('snap-src-path').value.trim() || ('policy-'+Date.now());
+  const r = await api('POST','/api/policies/save',{path:pathForPolicy, fields:{}, name});
+  if(r&&r.ok){
+    toast('Policy created — now editing…','success');
+    const polR = await api('GET','/api/policies');
+    _populateSnapPolicyDropdown(polR);
+    $('snap-src-policy').value = pathForPolicy;
+    editPolicy(pathForPolicy);
+  }
 }
 
 // ── Theme ───────────────────────────────────────────────────────────────────────
