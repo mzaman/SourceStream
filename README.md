@@ -1,9 +1,9 @@
 # SourceStream
 
-> **v1.0.15** — Native macOS backup app with menu bar agent, incremental backup,
+> **v1.0.16** — Native macOS backup app with menu bar agent, incremental backup,
 > and cloud remote destinations (S3 / B2 / rclone).
 
-[![Version](https://img.shields.io/badge/version-1.0.15-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.0.16-blue)](CHANGELOG.md)
 [![macOS](https://img.shields.io/badge/macOS-12%2B-lightgrey)](https://www.apple.com/macos/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 

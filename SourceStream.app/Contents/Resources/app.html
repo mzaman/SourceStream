@@ -2888,25 +2888,66 @@ function renderSnapSources(){
     const parts = s.split('|');
     const path = parts[0];
     const label = parts[1] || path.split('/').pop();
-    const keep  = parts[2] ? parts[2].replace('keep=','') : '0';
-    const policyPath = parts[3] ? parts[3].replace('policy=','') : '';
+    // parse keep= and policy= from any position in parts
+    let keep = '0', policyPath = '';
+    for(let j=2;j<parts.length;j++){
+      if(parts[j].startsWith('keep=')) keep = parts[j].replace('keep=','');
+      if(parts[j].startsWith('policy=')) policyPath = parts[j].replace('policy=','');
+    }
     const policyName = policyPath
-      ? (_policiesMeta[policyPath]?.name || policyPath)
+      ? (_policiesMeta[policyPath]?.name || policyPath.split('/').pop())
       : 'Global Policy';
+    const escapedPath = esc(path);
+    const escapedPolPath = esc(policyPath||'*');
     return `<div class="snap-src-card">
       <div class="snap-src-card-head">
         <div>
           <div style="font-weight:600;font-size:.82rem">${esc(label)}</div>
-          <div class="snap-src-path">${esc(path)}</div>
+          <div class="snap-src-path">${escapedPath}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span class="snap-src-policy-badge" onclick="editPolicy('${esc(policyPath||'*')}')" title="Click to edit policy">📋 ${esc(policyName)}</span>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-primary" style="font-size:.7rem;padding:3px 10px"
+            onclick="snapNow('${escapedPath}',this)" title="Run backup for this source now">
+            ▶ Snapshot Now
+          </button>
+          <span class="snap-src-policy-badge"
+            onclick="goEditPolicy('${escapedPolPath}')"
+            title="Click to edit policy">📋 ${esc(policyName)}</span>
           ${keep!=='0'?`<span class="pill p-b" style="font-size:.68rem">Keep: ${esc(keep)}</span>`:''}
-          <button class="btn btn-muted" style="font-size:.7rem;padding:2px 8px" onclick="removeSnapshotSource(${i})">🗑</button>
+          <button class="btn btn-muted" style="font-size:.7rem;padding:2px 8px"
+            onclick="removeSnapshotSource(${i})">🗑</button>
         </div>
       </div>
     </div>`;
   }).join('');
+}
+
+// Navigate to Policies page then open the editor for the given path
+async function goEditPolicy(path){
+  go('policies');
+  // loadPolicies is called by go(), wait a tick for the DOM to settle then open editor
+  await new Promise(r=>setTimeout(r,120));
+  editPolicy(path);
+}
+
+// Run backup for a single source immediately
+async function snapNow(sourcePath, btn){
+  const orig = btn.textContent;
+  btn.textContent = '⏳ Running…';
+  btn.disabled = true;
+  try {
+    const r = await api('POST','/api/run-backup',{notify:false, source_path:sourcePath});
+    if(r && r.ok){
+      toast(`✅ Snapshot started for ${sourcePath.split('/').pop()}`,'success');
+      // Refresh recent list after a moment
+      setTimeout(()=>renderSnapRecent(), 3000);
+    } else {
+      toast('❌ Snapshot failed: '+(r&&r.error||'unknown'),'error');
+    }
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
 }
 
 async function renderSnapRecent(){
@@ -2985,7 +3026,7 @@ async function quickAddPolicyForSource(){
     const polR = await api('GET','/api/policies');
     _populateSnapPolicyDropdown(polR);
     $('snap-src-policy').value = pathForPolicy;
-    editPolicy(pathForPolicy);
+    goEditPolicy(pathForPolicy);
   }
 }
 
