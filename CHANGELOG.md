@@ -5,6 +5,72 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ---
 
+## [1.0.13] — 2026-11-11
+
+### Fixed
+- **Archive page empty** — Python 3.12+ `UnboundLocalError` on `datetime` module name.
+  Local `import datetime` inside `/api/next-run` and `/api/archive-trend` handlers
+  shadowed the module-level `datetime` import, causing `/api/archives` to silently
+  return `[]`. Fixed by removing redundant local imports (module-level import used
+  throughout the method).
+- **Zip output flooding log** — Added `-q` (quiet) flag to both `zip` invocations in
+  `backup_engine.sh`. `adding: ...` lines no longer written to `backup.log`.
+- **Default archive format** — `DEFAULT_SETTINGS` in `server.py` now correctly defaults
+  to `zip` (was `tar.gz`), matching the actual engine default and config.
+
+### Changed
+- Bumped `APP_VERSION` to `1.0.13` in `server.py`, `menubar_agent.py`, `Info.plist`,
+  `build/build_dmg.sh`, `build/install.sh`, and `README.md`.
+
+---
+
+## [1.0.12] — 2026-11-11
+
+### Fixed
+- **Retention pruned NEWEST archive** — `ls -1t | head -n EXCESS` returned the most
+  recent archives; changed to `ls -1t | tail -n EXCESS` to correctly remove oldest.
+- **"tar exit 1" message shown for zip runs** — log message is now format-aware
+  (`zip exit 1` shown for zip archives, `tar exit 1` for tar).
+
+---
+
+## [1.0.11] — 2026-11-11
+
+### Fixed
+- **EXIT trap deleted successful archives** — `STAGE_PATH` was never removed from
+  `_PARTIAL_FILES` on success; added explicit removal so trap only cleans up
+  genuinely partial (failed) archives.
+- **Full Disk Access prompt at install** — `build_dmg.sh` installer now shows an
+  `osascript` dialog with an "Open Privacy Settings" button after setup.
+- **`Developer Backups` hardcoded** — renamed to `SourceStream Backups` in engine,
+  server, and config migration.
+- **Archive format default** — changed engine default from `tar.gz` to `zip`; updated
+  installer config and migration script.
+- **Build script version** — `build_dmg.sh` and `install.sh` bumped to 1.0.11.
+
+---
+
+## [1.0.10] — 2026-11-11
+
+### Fixed
+- **`.fcpcache → .` symlink infinite loop** — `zip -r` followed the `.fcpcache`
+  symlink recursively. Fixed with `zip -r -y` (store symlinks) + `find -P` +
+  `--exclude=".fcpcache"`.
+- **Permission denied silent** — engine now shows `osascript` dialog with
+  "Open Privacy Settings" button when a source folder is inaccessible.
+- **Double log lines** — `log_msg`/`log_err` used `tee -a OUTPUT_LOG` while the
+  wrapper also redirected stdout to the log; removed the redundant `tee`.
+
+---
+
+## [1.0.9] — 2026-11-11
+
+### Fixed
+- **`Movies}_...zip` stray `}` in archive name** — `${ARCHIVE_PREFIX:-{label}}`
+  Bash 3.2 expansion ambiguity; fixed with explicit empty-check guard (`_PFX`).
+
+---
+
 ## [1.0.8] — 2026-11-11
 
 ### Added

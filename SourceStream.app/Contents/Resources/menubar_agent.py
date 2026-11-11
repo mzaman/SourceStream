@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SourceStream Menu Bar Agent  v1.0.11
+SourceStream Menu Bar Agent  v1.0.13
 SourceStream.app/Contents/Resources/menubar_agent.py
 
 Native macOS menu bar icon using only stdlib (AppKit via PyObjC which ships

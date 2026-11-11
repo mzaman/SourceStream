@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SourceStream Dashboard Server  v1.0.11
+SourceStream Dashboard Server  v1.0.13
 SourceStream.app/Contents/Resources/server.py
 
 Binds to 127.0.0.1:7474.
@@ -11,7 +11,7 @@ Run via LaunchAgent (auto-starts at login) or via the app launcher.
 import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil, platform, sys
 from pathlib import Path
 
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.13"
 PORT        = 7474
 APP_RES     = Path(__file__).parent          # …/SourceStream.app/Contents/Resources/
 SS_DIR      = Path.home() / ".sourcestream"
@@ -54,7 +54,7 @@ DEFAULT_SETTINGS = {
     "ARCHIVE_PREFIX":      "{label}",
     "HOSTNAME_IN_NAME":    "false",
     "BACKUP_VERIFY":       "false",
-    "ARCHIVE_FORMAT":      "tar.gz",
+    "ARCHIVE_FORMAT":      "zip",
     "NOTIFY_ON_COMPLETE":  "false",
     "BACKUP_MODE":         "full",
 }
@@ -613,7 +613,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/next-run":
             """Return next scheduled backup time from launchd plist or cron."""
-            import datetime, subprocess, re as _re
+            import subprocess, re as _re
             result = {"source": None, "next": None, "schedule_str": None}
             # 1. Try launchd StartCalendarInterval
             plist_path = Path.home() / "Library/LaunchAgents/com.sourcestream.server.plist"
@@ -677,7 +677,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/archive-trend":
             """Return per-day total archive size across all destinations for trending."""
-            import datetime, re as _re
+            import re as _re
             _, _src, dsts, _exc, _src_exc, _ = parse_conf()
             dest_paths = [d.split("|")[0] for d in dsts] if dsts else [str(GDRIVE)]
             # Collect all archives with their size + date

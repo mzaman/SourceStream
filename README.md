@@ -1,9 +1,9 @@
 # SourceStream
 
-> **v1.0.11** — Native macOS backup app with menu bar agent, incremental backup,
+> **v1.0.13** — Native macOS backup app with menu bar agent, incremental backup,
 > and cloud remote destinations (S3 / B2 / rclone).
 
-[![Version](https://img.shields.io/badge/version-1.0.11-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.0.13-blue)](CHANGELOG.md)
 [![macOS](https://img.shields.io/badge/macOS-12%2B-lightgrey)](https://www.apple.com/macos/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
@@ -36,9 +36,9 @@ after each run.
 | Dry-run mode | 1.0.3 |
 | App icon + light/dark theme | 1.0.7 |
 | Notification & verify-after-backup toggles | 1.0.7 |
-| **Menu bar agent** (NSStatusBar) | **1.0.11** |
-| **Incremental backup** (mtime-sentinel) | **1.0.11** |
-| **Remote destinations** (S3 / B2 / rclone) | **1.0.11** |
+| **Menu bar agent** (NSStatusBar) | **1.0.13** |
+| **Incremental backup** (mtime-sentinel) | **1.0.13** |
+| **Remote destinations** (S3 / B2 / rclone) | **1.0.13** |
 
 ---
 
@@ -59,8 +59,8 @@ after each run.
 ### From DMG (recommended)
 
 ```bash
-# Download SourceStream-1.0.11.dmg, then:
-open SourceStream-1.0.11.dmg
+# Download SourceStream-1.0.13.dmg, then:
+open SourceStream-1.0.13.dmg
 # Drag SourceStream.app to /Applications, then:
 bash /Applications/SourceStream.app/Contents/Resources/../../../install.sh
 ```
@@ -263,7 +263,7 @@ Base URL: `http://127.0.0.1:7474`
 ```
 SourceStream.app/
 ├── Contents/
-│   ├── Info.plist                           # CFBundleVersion = 1.0.11
+│   ├── Info.plist                           # CFBundleVersion = 1.0.13
 │   ├── MacOS/
 │   │   └── SourceStream                     # Launcher shell script
 │   ├── Library/
@@ -298,7 +298,7 @@ SourceStream.app/
 ```bash
 cd /path/to/SourceStream
 bash build/build_dmg.sh
-# Output: dist/SourceStream-1.0.11.dmg
+# Output: dist/SourceStream-1.0.13.dmg
 ```
 
 ---
