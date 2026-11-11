@@ -5,6 +5,26 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ---
 
+## [1.0.16] — 2026-11-12
+
+### Fixed
+- **Policy badge navigation from Snapshots page** — clicking the 📋 policy badge on
+  a source card now correctly navigates to the Policies page _first_, then opens the
+  policy editor (`goEditPolicy()`). Previously calling `editPolicy()` directly while
+  on a different page had no visible effect.
+- **Snapshot Now button per source** — each source card on the Snapshots page now has
+  a "▶ Snapshot Now" button. Calls `POST /api/run-backup` for that specific source
+  path, disables while running, shows success/error toast, and refreshes the recent
+  snapshots list after 3 seconds.
+- **Source entry parsing (`keep=` / `policy=`)** — `keep=` and `policy=` pipe-fields
+  are now parsed by scanning all parts with `startsWith()` instead of relying on a
+  hardcoded positional index. Fixes breakage when `keep=` was absent and `policy=`
+  ended up at an unexpected index.
+- **Quick-add policy for source** — `quickAddPolicyForSource()` now uses
+  `goEditPolicy()` instead of `editPolicy()`, consistent with the fix above.
+
+---
+
 ## [1.0.15] — 2026-11-12
 
 ### Added
