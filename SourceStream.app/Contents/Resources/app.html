@@ -346,6 +346,9 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
     <div class="nav-item" data-page="archives" onclick="go('archives')">
       <span class="nav-icon">🗄️</span>Archives
     </div>
+    <div class="nav-item" data-page="policies" onclick="go('policies')">
+      <span class="nav-icon">📋</span>Policies
+    </div>
     <div class="nav-item" data-page="logs" onclick="go('logs')">
       <span class="nav-icon">📋</span>Logs
       <span class="nav-badge" id="err-nav-badge" style="display:none">!</span>
@@ -593,20 +596,73 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
       <div class="panel">
         <div class="panel-head">
           <span class="panel-title">🗄️ Backup Archives</span>
-          <div class="flex">
+          <div class="flex" style="gap:8px;align-items:center">
             <input class="form-input" id="arch-search" placeholder="Filter archives…"
                    oninput="filterArchives(this.value)"
                    style="width:180px;padding:5px 10px;font-size:.75rem">
+            <select id="arch-page-size" onchange="archPageSize=parseInt(this.value);archPage=0;renderArchives(_archFiltered)"
+                    style="padding:5px 8px;font-size:.75rem;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:6px">
+              <option value="10">10 / page</option>
+              <option value="25">25 / page</option>
+              <option value="50">50 / page</option>
+              <option value="9999">All</option>
+            </select>
             <span id="arch-cnt" class="pill p-b">0 files</span>
             <button class="btn btn-muted" onclick="loadArchives()">↻ Refresh</button>
           </div>
         </div>
         <div class="tbl-wrap">
           <table>
-            <thead><tr><th>Archive Name</th><th>Size</th><th>Destination</th><th>Created</th><th>Age</th><th>Integrity</th></tr></thead>
+            <thead><tr>
+              <th onclick="archSort('name')" style="cursor:pointer;user-select:none">Archive Name <span id="sort-name"></span></th>
+              <th onclick="archSort('size_bytes')" style="cursor:pointer;user-select:none">Size <span id="sort-size_bytes"></span></th>
+              <th>Destination</th>
+              <th onclick="archSort('created')" style="cursor:pointer;user-select:none">Created <span id="sort-created"></span></th>
+              <th onclick="archSort('age')" style="cursor:pointer;user-select:none">Age <span id="sort-age"></span></th>
+              <th>Actions</th>
+            </tr></thead>
             <tbody id="arch-tbody"><tr><td colspan="6" class="no-data">Loading…</td></tr></tbody>
           </table>
         </div>
+        <!-- Pagination -->
+        <div id="arch-pager" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;font-size:.78rem;color:var(--dim)">
+          <span id="arch-pager-info"></span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-muted" id="arch-prev" onclick="archChangePage(-1)" style="padding:4px 10px">‹ Prev</button>
+            <span id="arch-page-nums" style="display:flex;gap:4px"></span>
+            <button class="btn btn-muted" id="arch-next" onclick="archChangePage(1)" style="padding:4px 10px">Next ›</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ POLICIES ══════════════ -->
+    <div class="page" id="pg-policies">
+      <div style="display:flex;gap:16px;align-items:flex-start;margin-bottom:16px">
+        <div class="panel" style="flex:1">
+          <div class="panel-head">
+            <span class="panel-title">📋 Backup Policies</span>
+            <button class="btn btn-primary" onclick="showAddPolicyDialog()" style="font-size:.75rem">+ Add Path Policy</button>
+          </div>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr><th>Path</th><th>Type</th><th>Defined Fields</th><th>Actions</th></tr></thead>
+              <tbody id="pol-list-tbody"><tr><td colspan="4" class="no-data">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Policy Editor -->
+      <div class="panel" id="pol-editor-panel" style="display:none">
+        <div class="panel-head">
+          <span class="panel-title" id="pol-editor-title">📋 Edit Policy</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" onclick="savePolicyEditor()">💾 Save Policy</button>
+            <button class="btn btn-muted" onclick="closePolicyEditor()">✕ Close</button>
+          </div>
+        </div>
+        <div id="pol-editor-body" style="padding:16px"></div>
       </div>
     </div>
 
@@ -1077,7 +1133,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 const BASE = 'http://127.0.0.1:7474';
 const PAGE_TITLES = {
   dashboard:'Dashboard', backup:'Run Backup', archives:'Archives',
-  logs:'Logs', health:'Health Check', schedule:'Schedule', settings:'Settings',
+  policies:'Policies', logs:'Logs', health:'Health Check', schedule:'Schedule', settings:'Settings',
   history:'Backup History', notes:'Notes & System Info', remotes:'Remote Destinations'
 };
 let currentPage = 'dashboard';
@@ -1095,6 +1151,13 @@ function fmtMB(mb){
   mb = Number(mb||0);
   if (mb >= 1024) return (mb/1024).toFixed(1)+' GB';
   return mb+' MB';
+}
+function fmtBytes(b){
+  b = Number(b||0);
+  if(b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
+  if(b >= 1048576)    return (b/1048576).toFixed(2)+' MB';
+  if(b >= 1024)       return (b/1024).toFixed(1)+' KB';
+  return b+' B';
 }
 function ago(ds){
   if (!ds) return '—';
@@ -1149,6 +1212,7 @@ function go(page){
   $('page-title').textContent = PAGE_TITLES[page]||page;
   currentPage = page;
   if(page==='archives') loadArchives();
+  if(page==='policies') loadPolicies();
   if(page==='logs')     loadLogs();
   if(page==='health')   runHealth();
   if(page==='schedule') loadSchedule();
@@ -1423,19 +1487,56 @@ async function runAnalyze(){
 
 // ── Archives ──────────────────────────────────────────────────────────────────
 let _allArchives = [];
+let _archFiltered = [];
+let _archSortKey = 'created';
+let _archSortDir = -1;  // -1=desc, 1=asc
+let archPage = 0;
+let archPageSize = 10;
 
 async function loadArchives(){
   $('arch-tbody').innerHTML='<tr><td colspan="6" class="no-data">Loading…</td></tr>';
   const r = await api('GET', '/api/archives');
   _allArchives = r||[];
-  renderArchives(_allArchives);
+  _archFiltered = [..._allArchives];
+  archSort(_archSortKey, true);
 }
 
 function filterArchives(query){
   const q = query.toLowerCase();
-  renderArchives(q ? _allArchives.filter(a=>a.name.toLowerCase().includes(q)||a.destination.toLowerCase().includes(q)) : _allArchives);
+  _archFiltered = q ? _allArchives.filter(a=>a.name.toLowerCase().includes(q)||a.destination.toLowerCase().includes(q)) : [..._allArchives];
+  archPage = 0;
+  renderArchives(_archFiltered);
 }
 
+function archSort(key, keepDir){
+  if(!keepDir){
+    if(_archSortKey === key) _archSortDir *= -1;
+    else { _archSortKey = key; _archSortDir = key==='created'||key==='age' ? -1 : 1; }
+  }
+  const d = _archSortDir;
+  _archFiltered.sort((a,b)=>{
+    if(key==='age'||key==='created'){
+      return d * (new Date(a.created||0) - new Date(b.created||0));
+    }
+    if(key==='size_bytes'){
+      return d * ((a.size_bytes||0) - (b.size_bytes||0));
+    }
+    return d * String(a[key]||'').localeCompare(String(b[key]||''));
+  });
+  // Update sort indicators
+  ['name','size_bytes','created','age'].forEach(k=>{
+    const el = $('sort-'+k); if(!el) return;
+    el.textContent = _archSortKey===k ? (d===1?'↑':'↓') : '';
+  });
+  archPage = 0;
+  renderArchives(_archFiltered);
+}
+
+function archChangePage(delta){
+  const pages = Math.ceil(_archFiltered.length / archPageSize);
+  archPage = Math.max(0, Math.min(pages-1, archPage+delta));
+  renderArchives(_archFiltered);
+}
 
 function archiveFmtBadge(name){
   if(name.endsWith('.tar.bz2')) return '<span class="pill p-warn" style="font-size:.6rem">bz2</span>';
@@ -1448,27 +1549,49 @@ function archiveLabel(name){
 }
 function renderArchives(list){
   $('arch-cnt').textContent=list.length+' file'+(list.length!==1?'s':'');
-  if(!list.length){
-    $('arch-tbody').innerHTML='<tr><td colspan="6" class="no-data">No archives found</td></tr>'; return;
+  const pages = Math.ceil(list.length / archPageSize) || 1;
+  archPage = Math.min(archPage, pages-1);
+  const start = archPage * archPageSize;
+  const slice = list.slice(start, start+archPageSize);
+  if(!slice.length){
+    $('arch-tbody').innerHTML='<tr><td colspan="6" class="no-data">No archives found</td></tr>';
+  } else {
+    $('arch-tbody').innerHTML=slice.map(a=>{
+      const lbl=archiveLabel(a.name);
+      const spath = esc(a.path||'');
+      const sname = esc(a.name||'');
+      return `<tr>
+      <td><div style="display:flex;align-items:center;gap:5px">${archiveFmtBadge(a.name)}<span style="font-family:monospace;font-size:.72rem">${esc(lbl)}</span></div>
+          <div style="color:var(--dim);font-size:.65rem;margin-top:2px">${sname}</div></td>
+      <td style="white-space:nowrap">${fmtBytes(a.size_bytes||0)}</td>
+      <td>${pill(a.destination,'p-p')}</td>
+      <td style="color:var(--dim);font-size:.78rem">${esc(a.created||'—')}</td>
+      <td style="color:var(--muted);font-size:.78rem">${ago(a.created)}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-muted" style="font-size:.68rem;padding:3px 8px" title="Verify integrity"
+          onclick="verifyArchive('${spath}',this)">🔍</button>
+        <button class="btn btn-muted" style="font-size:.68rem;padding:3px 8px" title="Reveal in Finder"
+          onclick="revealArchive('${spath}',this)">📂</button>
+        <button class="btn btn-muted" style="font-size:.68rem;padding:3px 8px;color:#f87171" title="Delete"
+          onclick="deleteArchive('${spath}','${sname}',this)">🗑</button>
+      </td>
+    </tr>`;}).join('');
   }
-  $('arch-tbody').innerHTML=list.map(a=>{
-    const lbl=archiveLabel(a.name);
-    return `<tr>
-    <td><div style="display:flex;align-items:center;gap:5px">${archiveFmtBadge(a.name)}<span style="font-family:monospace;font-size:.72rem">${esc(lbl)}</span></div>
-        <div style="color:var(--dim);font-size:.65rem;margin-top:2px">${esc(a.name)}</div></td>
-    <td>${fmtMB(a.size_mb)}</td>
-    <td>${pill(a.destination,'p-p')}</td>
-    <td style="color:var(--dim)">${esc(a.created||'—')}</td>
-    <td style="color:var(--muted)">${ago(a.created)}</td>
-    <td style="white-space:nowrap">
-      <button class="btn btn-muted" style="font-size:.68rem;padding:3px 8px;margin-right:3px"
-        onclick="verifyArchive('${esc(a.path)}',this)">🔍 Verify</button>
-      <button class="btn btn-muted" style="font-size:.68rem;padding:3px 8px;color:#f87171"
-        onclick="deleteArchive('${esc(a.path)}','${esc(a.name)}',this)">🗑</button>
-    </td>
-  </tr>`;}).join('');
+  // Pager
+  $('arch-pager-info').textContent = `Showing ${start+1}–${Math.min(start+archPageSize,list.length)} of ${list.length}`;
+  $('arch-prev').disabled = archPage === 0;
+  $('arch-next').disabled = archPage >= pages-1;
+  const nums = $('arch-page-nums');
+  nums.innerHTML = '';
+  for(let i=0;i<pages;i++){
+    const b = document.createElement('button');
+    b.className = 'btn btn-muted';
+    b.style.cssText = 'padding:4px 8px;font-size:.72rem' + (i===archPage?';background:var(--accent);color:#fff':'');
+    b.textContent = i+1;
+    b.onclick = ()=>{ archPage=i; renderArchives(_archFiltered); };
+    nums.appendChild(b);
+  }
 }
-
 
 async function deleteArchive(path, name, btn){
   if(!confirm('Delete archive?\n\n'+name+'\n\nThis CANNOT be undone.')) return;
@@ -1483,7 +1606,15 @@ async function verifyArchive(path, btn){
   const r = await api('GET', `/api/archive-verify?path=${encodeURIComponent(path)}`);
   if(r && r.ok) toast(`✅ Archive OK — ${r.entries} entries`, 'success');
   else toast(`❌ Corrupt: ${r&&r.error||'unknown'}`, 'error');
-  btn.textContent='🔍 Verify'; btn.disabled=false;
+  btn.textContent='🔍'; btn.disabled=false;
+}
+
+async function revealArchive(path, btn){
+  btn.textContent='…'; btn.disabled=true;
+  const r = await api('POST','/api/archive-reveal',{path});
+  if(r && r.ok) toast('📂 Revealed in Finder','success');
+  else toast('❌ File not found','error');
+  btn.textContent='📂'; btn.disabled=false;
 }
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
@@ -2278,6 +2409,192 @@ async function testRemoteCLI(){
   else toast(`\${d.cli||scheme} not found. \${d.install||''}`, 'error', 6000);
 }
 
+// ── Policies ───────────────────────────────────────────────────────────────────
+let _policies = [];
+let _curPolPath = null;
+let _polData = null;
+
+const POL_SECTIONS = [
+  { key: 'retention', label: '📦 Snapshot Retention', fields: [
+    { k:'keepLatest',  label:'Latest Snapshots',  desc:'Most recent snapshots to keep per source', type:'number' },
+    { k:'keepHourly',  label:'Hourly',  desc:'Hourly snapshots to retain', type:'number' },
+    { k:'keepDaily',   label:'Daily',   desc:'Daily snapshots to retain', type:'number' },
+    { k:'keepWeekly',  label:'Weekly',  desc:'Weekly snapshots to retain', type:'number' },
+    { k:'keepMonthly', label:'Monthly', desc:'Monthly snapshots to retain', type:'number' },
+    { k:'keepAnnual',  label:'Annual',  desc:'Annual snapshots to retain', type:'number' },
+    { k:'ignoreIdentical', label:'Ignore Identical Snapshots', desc:'Skip snapshot when no files have changed', type:'bool' },
+  ]},
+  { key: 'files', label: '📁 Files', fields: [
+    { k:'ignoreFiles',          label:'Ignore Files',                  desc:'File/directory names to ignore (one per line)', type:'textarea' },
+    { k:'ignoreWellKnownCaches',label:'Ignore Well-Known Cache Dirs',  desc:'Ignore CACHEDIR.TAG and similar cache directories', type:'bool' },
+    { k:'ignoreLargerThan',     label:'Ignore Files Larger Than',      desc:'Ignore files larger than this size (bytes)', type:'text', placeholder:'bytes, e.g. 104857600' },
+    { k:'oneSingleFS',          label:'Scan Only One Filesystem',      desc:'Do not cross filesystem boundaries', type:'bool' },
+  ]},
+  { key: 'errors', label: '⚠️ Error Handling', fields: [
+    { k:'ignoreFileErrors',       label:'Ignore File Errors',           desc:'Treat file read errors as non-fatal', type:'bool' },
+    { k:'ignoreDirectoryErrors',  label:'Ignore Directory Errors',      desc:'Treat directory read errors as non-fatal', type:'bool' },
+    { k:'ignoreUnknownTypes',     label:'Ignore Unknown Dir Entries',   desc:'Treat unrecognized directory entries as non-fatal', type:'bool' },
+  ]},
+  { key: 'compression', label: '🗜️ Compression', fields: [
+    { k:'compressorName', label:'Compression Algorithm', desc:'Algorithm for new backups', type:'select',
+      options:['none','zstd-fastest','zstd-default','zstd-better-compression','gzip-default','lz4'] },
+    { k:'minFileSize',   label:'Min File Size (bytes)', desc:'Files smaller than this will not be compressed', type:'text', placeholder:'bytes' },
+    { k:'maxFileSize',   label:'Max File Size (bytes)', desc:'Files larger than this will not be compressed', type:'text', placeholder:'bytes' },
+    { k:'onlyExtensions',label:'Only Compress Extensions', desc:'Only compress these extensions (one per line, e.g. .txt)', type:'textarea' },
+    { k:'neverExtensions',label:'Never Compress Extensions', desc:'Never compress these extensions (one per line, e.g. .mp4)', type:'textarea' },
+  ]},
+  { key: 'scheduling', label: '📅 Scheduling', fields: [
+    { k:'scheduleInterval', label:'Snapshot Frequency', desc:'How frequently to create backups', type:'select',
+      options:['','600','900','1200','1800','3600','10800','21600','43200'],
+      labels:['(none)','Every 10 min','Every 15 min','Every 20 min','Every 30 min','Every hour','Every 3 hours','Every 6 hours','Every 12 hours'] },
+    { k:'scheduleCron',  label:'Cron Expression', desc:'UNIX crontab syntax (e.g. 0 2 * * *)', type:'text', placeholder:'0 2 * * *' },
+    { k:'runMissed',     label:'Run Missed Snapshots on Startup', desc:'Run any missed backups when server starts', type:'bool' },
+    { k:'manualOnly',    label:'Manual Snapshots Only', desc:'Disable all scheduled backups — run manually only', type:'bool' },
+  ]},
+  { key: 'actions', label: '⚡ Snapshot Actions', fields: [
+    { k:'beforeScript',  label:'Before Snapshot Script', desc:'Script path to run before each backup', type:'text', placeholder:'/path/to/script.sh' },
+    { k:'beforeTimeout', label:'Before Script Timeout (s)', desc:'Seconds before killing the before-script', type:'number' },
+    { k:'beforeMode',    label:'Before Script Mode', desc:'How failures are handled', type:'select',
+      options:['essential','optional','async'], labels:['Must succeed','Optional (failures tolerated)','Async (fire and forget)'] },
+    { k:'afterScript',   label:'After Snapshot Script', desc:'Script path to run after each backup', type:'text', placeholder:'/path/to/script.sh' },
+    { k:'afterTimeout',  label:'After Script Timeout (s)', desc:'Seconds before killing the after-script', type:'number' },
+    { k:'afterMode',     label:'After Script Mode', desc:'How failures are handled', type:'select',
+      options:['essential','optional','async'], labels:['Must succeed','Optional (failures tolerated)','Async (fire and forget)'] },
+  ]},
+];
+
+async function loadPolicies(){
+  $('pol-list-tbody').innerHTML='<tr><td colspan="4" class="no-data">Loading…</td></tr>';
+  const r = await api('GET','/api/policies');
+  _policies = r||[];
+  // Always ensure global exists
+  if(!_policies.find(p=>p.path==='*')) _policies.unshift({path:'*',is_global:true,defined_keys:[],defined:{},effective:{}});
+  renderPolicyList();
+}
+
+function renderPolicyList(){
+  if(!_policies.length){ $('pol-list-tbody').innerHTML='<tr><td colspan="4" class="no-data">No policies</td></tr>'; return; }
+  $('pol-list-tbody').innerHTML = _policies.map(p=>`<tr>
+    <td style="font-family:monospace;font-size:.82rem">${p.is_global?'<strong>* (Global)</strong>':esc(p.path)}</td>
+    <td>${p.is_global?pill('Global','p-p'):pill('Path','p-b')}</td>
+    <td style="font-size:.75rem;color:var(--dim)">${(p.defined_keys||[]).length} defined field(s)</td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-muted" style="font-size:.72rem;padding:3px 8px" onclick="editPolicy(${JSON.stringify(esc(p.path))})">✏️ Edit</button>
+      ${!p.is_global?`<button class="btn btn-muted" style="font-size:.72rem;padding:3px 8px;color:#f87171" onclick="deletePolicy(${JSON.stringify(esc(p.path))})">🗑</button>`:''}
+    </td>
+  </tr>`).join('');
+}
+
+async function editPolicy(path){
+  _curPolPath = path;
+  const r = await api('GET',`/api/policies/resolve?path=${encodeURIComponent(path)}`);
+  if(!r){ toast('Failed to load policy','error'); return; }
+  _polData = r;
+  $('pol-editor-title').textContent = path==='*' ? '🌍 Global Policy' : `📋 Policy: ${path}`;
+  renderPolicyEditor(r);
+  $('pol-editor-panel').style.display = '';
+  $('pol-editor-panel').scrollIntoView({behavior:'smooth'});
+}
+
+function renderPolicyEditor(data){
+  const isGlobal = data.is_global;
+  const defined  = data.defined  || {};
+  const effective= data.effective|| {};
+  const deflt    = data.default  || {};
+
+  let html = '';
+  for(const sec of POL_SECTIONS){
+    html += `<div style="margin-bottom:24px">
+      <div style="font-weight:700;font-size:.85rem;color:var(--accent);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border)">${sec.label}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.82rem">
+        <thead><tr>
+          <th style="text-align:left;padding:4px 8px;color:var(--dim);font-weight:600;width:30%">Field</th>
+          <th style="text-align:left;padding:4px 8px;color:var(--dim);font-weight:600;width:30%">Defined</th>
+          <th style="text-align:left;padding:4px 8px;color:var(--dim);font-weight:600;width:20%">Effective</th>
+          <th style="text-align:left;padding:4px 8px;color:var(--dim);font-weight:600">Source</th>
+        </tr></thead>
+        <tbody>`;
+    for(const f of sec.fields){
+      const isDefined  = f.k in defined;
+      const defVal     = deflt[f.k] ?? '';
+      const effVal     = effective[f.k] ?? defVal;
+      const curVal     = isDefined ? defined[f.k] : '';
+      const srcBadge   = isDefined
+        ? '<span style="color:var(--green);font-size:.72rem">✦ Defined by this policy</span>'
+        : (isGlobal
+            ? `<span style="color:var(--dim);font-size:.72rem">Default: ${esc(String(defVal))}</span>`
+            : `<span style="color:var(--dim);font-size:.72rem">↑ <a href="#" onclick="editPolicy('*');return false" style="color:var(--accent)">Global Policy</a></span>`);
+      let inputHtml = '';
+      if(f.type==='bool'){
+        inputHtml = `<div style="display:flex;gap:6px">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+            <input type="radio" name="pol_${f.k}" value="" ${!isDefined?'checked':''}> inherit
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+            <input type="radio" name="pol_${f.k}" value="true" ${isDefined&&curVal==='true'?'checked':''}> yes
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+            <input type="radio" name="pol_${f.k}" value="false" ${isDefined&&curVal==='false'?'checked':''}> no
+          </label>
+        </div>`;
+      } else if(f.type==='select'){
+        const opts = (f.options||[]).map((o,i)=>`<option value="${esc(o)}" ${curVal===o||(!isDefined&&!o&&!isGlobal)?'selected':''}>${esc((f.labels||[])[i]||o)}</option>`).join('');
+        inputHtml = `<select id="pol_${f.k}" style="padding:3px 6px;font-size:.78rem;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px"><option value="">— inherit —</option>${opts}</select>`;
+      } else if(f.type==='textarea'){
+        inputHtml = `<textarea id="pol_${f.k}" rows="3" style="width:100%;padding:4px 6px;font-size:.75rem;font-family:monospace;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px;resize:vertical" placeholder="(inherit)">${esc(curVal)}</textarea>`;
+      } else {
+        inputHtml = `<input type="${f.type==='number'?'number':'text'}" id="pol_${f.k}" value="${esc(curVal)}" placeholder="(inherit)" style="padding:4px 8px;font-size:.78rem;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px;width:100%">`;
+      }
+      html += `<tr style="border-top:1px solid var(--border)">
+        <td style="padding:8px"><div style="font-weight:600">${esc(f.label)}</div><div style="color:var(--dim);font-size:.7rem;margin-top:2px">${esc(f.desc)}</div></td>
+        <td style="padding:8px">${inputHtml}</td>
+        <td style="padding:8px;color:var(--dim);font-family:monospace;font-size:.75rem">${esc(String(effVal))}</td>
+        <td style="padding:8px">${srcBadge}</td>
+      </tr>`;
+    }
+    html += `</tbody></table></div>`;
+  }
+  $('pol-editor-body').innerHTML = html;
+}
+
+async function savePolicyEditor(){
+  if(!_curPolPath) return;
+  const fields = {};
+  for(const sec of POL_SECTIONS){
+    for(const f of sec.fields){
+      if(f.type==='bool'){
+        const checked = document.querySelector(`input[name="pol_${f.k}"]:checked`);
+        if(checked) fields[f.k] = checked.value; // '' = inherit = not stored
+      } else {
+        const el = $(f.type==='select'?`pol_${f.k}`:`pol_${f.k}`);
+        if(el) fields[f.k] = el.value;
+      }
+    }
+  }
+  const r = await api('POST','/api/policies/save',{path:_curPolPath, fields});
+  if(r && r.ok){ toast('✅ Policy saved','success'); loadPolicies(); editPolicy(_curPolPath); }
+  else toast('❌ Save failed: '+(r&&r.error||'?'),'error');
+}
+
+function closePolicyEditor(){
+  $('pol-editor-panel').style.display='none';
+  _curPolPath = null; _polData = null;
+}
+
+async function deletePolicy(path){
+  if(!confirm(`Delete policy for path:\n${path}\n\nThis cannot be undone.`)) return;
+  const r = await api('POST','/api/policies/delete',{path});
+  if(r && r.ok){ toast('🗑 Policy deleted','success'); closePolicyEditor(); loadPolicies(); }
+  else toast('❌ Delete failed: '+(r&&r.error||'?'),'error');
+}
+
+function showAddPolicyDialog(){
+  const path = prompt('Enter the source path to create a policy for:\n(e.g. /Users/masud/Movies)');
+  if(!path || !path.trim()) return;
+  editPolicy(path.trim());
+}
+
+// ── Theme ───────────────────────────────────────────────────────────────────────
 function toggleTheme(){
   const html=document.documentElement;
   if(html.classList.contains('force-light')){
