@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SourceStream Dashboard Server  v1.0.14
+SourceStream Dashboard Server  v1.0.15
 SourceStream.app/Contents/Resources/server.py
 
 Binds to 127.0.0.1:7474.
@@ -11,7 +11,7 @@ Run via LaunchAgent (auto-starts at login) or via the app launcher.
 import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil, platform, sys
 from pathlib import Path
 
-APP_VERSION = "1.0.14"
+APP_VERSION = "1.0.15"
 PORT        = 7474
 APP_RES     = Path(__file__).parent          # …/SourceStream.app/Contents/Resources/
 SS_DIR      = Path.home() / ".sourcestream"
@@ -215,7 +215,8 @@ DEFAULT_POLICY = {
 }
 
 def parse_policies():
-    """Parse [policy:PATH] sections from conf. Returns dict {path: {key: val}}."""
+    """Parse [policy:PATH] sections from conf. Returns dict {path: {key: val}}.
+    Special key __name stores the human-readable policy name."""
     policies = {}
     section  = None
     cur_path = None
@@ -237,6 +238,15 @@ def parse_policies():
     except Exception:
         pass
     return policies
+
+def _policies_meta(policies):
+    """Extract {path: {name: …}} meta dict from __name keys."""
+    meta = {}
+    for path, fields in policies.items():
+        name = fields.get("__name", "")
+        if name:
+            meta[path] = {"name": name}
+    return meta
 
 def write_policies(policies):
     """Replace [policy:*] sections in conf without touching other sections."""
@@ -265,13 +275,20 @@ def write_policies(policies):
     CONF.write_text("\n".join(lines_out))
 
 def resolve_policy(path, policies):
-    """Resolve effective policy: path fields override global (*) fields."""
-    global_pol = dict(DEFAULT_POLICY)
-    global_pol.update(policies.get("*", {}))
-    path_pol   = policies.get(path, {})
-    effective  = dict(global_pol)
+    """Resolve effective policy: path fields override global (*) fields.
+    Returns {defined, effective, global, is_global}."""
+    global_fields = {k: v for k, v in policies.get("*", {}).items() if k != "__name"}
+    global_pol    = dict(DEFAULT_POLICY)
+    global_pol.update(global_fields)
+    path_pol      = {k: v for k, v in policies.get(path, {}).items() if k != "__name"}
+    effective     = dict(global_pol)
     effective.update(path_pol)
-    return {"defined": path_pol, "effective": effective, "global": global_pol}
+    return {
+        "defined":   path_pol,
+        "effective": effective,
+        "global":    global_pol,
+        "is_global": path == "*",
+    }
 
 
 
@@ -856,14 +873,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/policies":
             pols = parse_policies()
-            return self.jsend({"ok": True, "policies": pols})
+            # Strip __name from fields but expose as meta
+            meta = _policies_meta(pols)
+            clean = {path: {k: v for k, v in fields.items() if k != "__name"}
+                     for path, fields in pols.items()}
+            return self.jsend({"ok": True, "policies": clean, "meta": meta})
 
         if p.startswith("/api/policies/resolve"):
             qs   = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             path = qs.get("path", ["*"])[0]
             pols = parse_policies()
             resolved = resolve_policy(path, pols)
-            return self.jsend({"ok": True, "path": path, "resolved": resolved})
+            return self.jsend({"ok": True, "path": path, **resolved})
 
         # Static fallback
         fp = APP_RES / p.lstrip("/")
@@ -1306,15 +1327,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p == "/api/policies/save":
             pol_path = body.get("path", "").strip()
             fields   = body.get("fields", {})
+            name     = body.get("name", "").strip()
             if not pol_path:
                 return self.jsend({"ok": False, "error": "path required"})
             pols = parse_policies()
             if "*" not in pols:
                 pols["*"] = {}
+            # Build cleaned field dict (strip empty values except for global)
             if pol_path != "*":
-                pols[pol_path] = {k: v for k, v in fields.items() if v not in ("", None)}
+                clean = {k: v for k, v in fields.items() if v not in ("", None)}
             else:
-                pols["*"] = {k: v for k, v in fields.items() if v is not None}
+                clean = {k: v for k, v in fields.items() if v is not None}
+            # Store name as __name meta key
+            if name:
+                clean["__name"] = name
+            elif pol_path in pols and "__name" in pols[pol_path]:
+                clean["__name"] = pols[pol_path]["__name"]  # preserve existing name
+            pols[pol_path] = clean
             write_policies(pols)
             return self.jsend({"ok": True})
 
