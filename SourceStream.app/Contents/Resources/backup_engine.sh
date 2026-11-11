@@ -749,7 +749,7 @@ process_backup() {
             cd "$(dirname "$REAL_SRC")" || exit 1
             if [ -n "$INCR_ZIP_LIST" ] && [ -s "$INCR_ZIP_LIST" ]; then
                 # -y: store symlinks as symlinks (prevents following .fcpcache -> . infinite loop)
-                COPYFILE_DISABLE=1 zip -r -y -${CLEVEL} "$STAGE_PATH" \
+                COPYFILE_DISABLE=1 zip -r -y -q -${CLEVEL} "$STAGE_PATH" \
                     -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
                     -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
                     -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
@@ -759,7 +759,7 @@ process_backup() {
                     2>"$TAR_STDERR_TMP"
             else
                 # -y: store symlinks as symlinks (prevents following .fcpcache -> . infinite loop)
-                COPYFILE_DISABLE=1 zip -r -y -${CLEVEL} "$STAGE_PATH" "$(basename "$REAL_SRC")" \
+                COPYFILE_DISABLE=1 zip -r -y -q -${CLEVEL} "$STAGE_PATH" "$(basename "$REAL_SRC")" \
                     -x "*.DS_Store" -x "*/node_modules/*" -x "*/.git/objects/pack/*" \
                     -x "*/__pycache__/*" -x "*.pyc" -x "*/DerivedData/*" \
                     -x "*.photoslibrary/*" -x "*/.venv/*" -x "*/venv/*" \
