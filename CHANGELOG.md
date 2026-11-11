@@ -5,6 +5,41 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ---
 
+## [1.0.14] — 2026-11-12
+
+### Fixed
+- **Scheduling shows "cron not set"** — LaunchAgent sandbox cannot read user crontab.
+  Now uses a dedicated `com.sourcestream.backup.plist` with `StartCalendarInterval`.
+  `/api/schedule` writes/reads launchd plist; `/api/health` checks plist first, falls
+  back to crontab. Schedule now persists and shows correctly after app restart.
+- **Archive size always "0 MB"** — `int()` rounded small archives (<1 MB) to zero.
+  Now returns both `size_bytes` (int) and `size_mb` (float, 2 decimal places).
+  Frontend uses `fmtBytes()` for accurate B/KB/MB/GB display.
+
+### Added
+- **Archive table: sortable columns** — click Name / Size / Created / Age headers to
+  toggle ascending / descending order.
+- **Archive table: pagination** — 10 / 25 / 50 / All per page; Prev / Next / page-number
+  buttons. Preserves sort state across page changes.
+- **Reveal in Finder** — 📂 button per archive row opens Finder via `open -R` through
+  new POST `/api/archive-reveal` endpoint.
+- **Policies page** — Kopia-inspired policy system:
+  - Global Policy (`*`) covers all sources and cannot be deleted.
+  - Per-path policies inherit from Global; only explicitly set fields are stored.
+  - Sections: Retention, Files, Error Handling, Compression, Scheduling, Actions.
+  - Unset fields show "Defined by [Global Policy]"; set fields show "Defined by this policy".
+  - Stored as `[policy:PATH]` sections in `~/.sourcestream/config/sourcestream.conf`.
+  - APIs: `GET /api/policies`, `GET /api/policies/resolve?path=`,
+    `POST /api/policies/save`, `POST /api/policies/delete`.
+- **`fmtBytes()` utility** — displays archive sizes as B / KB / MB / GB.
+
+### Changed
+- Bumped `APP_VERSION` to 1.0.14 across server, menubar agent, Info.plist, installer,
+  build script, README, and CHANGELOG.
+
+---
+
+
 ## [1.0.13] — 2026-11-11
 
 ### Fixed

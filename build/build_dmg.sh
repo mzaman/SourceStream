@@ -2,7 +2,7 @@
 # ==============================================================================
 # build_dmg.sh  —  SourceStream macOS DMG Builder
 # Run from the project root:  bash build/build_dmg.sh
-# Output: dist/SourceStream-1.0.13.dmg
+# Output: dist/SourceStream-1.0.14.dmg
 #
 # What the resulting DMG provides:
 #   • SourceStream.app  — drag to /Applications (standard UX)
@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 APP_NAME="SourceStream"
 APP_BUNDLE="$APP_NAME.app"
-VERSION="1.0.13"
+VERSION="1.0.14"
 DMG_NAME="$APP_NAME-$VERSION"
 DIST_DIR="$PROJECT_DIR/dist"
 STAGE_DIR="$DIST_DIR/stage"
@@ -83,7 +83,7 @@ ln -s /Applications "$STAGE_DIR/Applications"
 cat > "$STAGE_DIR/Install SourceStream.command" << 'INSTALLER'
 #!/bin/bash
 # ==============================================================================
-# SourceStream Installer  v1.0.13
+# SourceStream Installer  v1.0.14
 # Double-click this file in the DMG to install or update SourceStream.
 # Safe for reinstalls — existing config is PRESERVED and new keys merged in.
 # ==============================================================================
@@ -91,7 +91,7 @@ set -e
 clear
 echo ""
 echo "╔════════════════════════════════════════════════════╗"
-echo "║   ⚡ SourceStream  —  Installer  v1.0.13           ║"
+echo "║   ⚡ SourceStream  —  Installer  v1.0.14           ║"
 echo "║   Smart backups. Zero friction.                    ║"
 echo "╚════════════════════════════════════════════════════╝"
 echo ""
@@ -445,14 +445,14 @@ fi
 echo ""
 if $IS_UPDATE; then
 echo "╔════════════════════════════════════════════════════════════╗"
-echo "║  ✅ SourceStream updated to v1.0.13 successfully!          ║"
+echo "║  ✅ SourceStream updated to v1.0.14 successfully!          ║"
 echo "║                                                            ║"
 echo "║  Your config and data were PRESERVED.                     ║"
 echo "║  New settings keys were merged in automatically.          ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 else
 echo "╔════════════════════════════════════════════════════════════╗"
-echo "║  ✅ SourceStream v1.0.13 installed successfully!           ║"
+echo "║  ✅ SourceStream v1.0.14 installed successfully!           ║"
 echo "║                                                            ║"
 echo "║  🖥  Double-click ~/Desktop/SourceStream.app to open      ║"
 echo "║  🌐  Or browse to: http://127.0.0.1:7474/                 ║"
@@ -560,7 +560,7 @@ echo "   ✅ Uninstall SourceStream.command staged"
 # ── 3e. README.txt ────────────────────────────────────────────────────────────
 {
 printf '%s\n' \
-    'SourceStream  --  Smart backups. Zero friction.  v1.0.13' \
+    'SourceStream  --  Smart backups. Zero friction.  v1.0.14' \
     '=========================================================' \
     '' \
     'QUICK INSTALL (Recommended)' \

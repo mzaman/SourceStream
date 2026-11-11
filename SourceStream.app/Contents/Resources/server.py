@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SourceStream Dashboard Server  v1.0.13
+SourceStream Dashboard Server  v1.0.14
 SourceStream.app/Contents/Resources/server.py
 
 Binds to 127.0.0.1:7474.
@@ -11,7 +11,7 @@ Run via LaunchAgent (auto-starts at login) or via the app launcher.
 import http.server, json, os, subprocess, glob, datetime, socketserver, urllib.parse, re, shutil, platform, sys
 from pathlib import Path
 
-APP_VERSION = "1.0.13"
+APP_VERSION = "1.0.14"
 PORT        = 7474
 APP_RES     = Path(__file__).parent          # …/SourceStream.app/Contents/Resources/
 SS_DIR      = Path.home() / ".sourcestream"
@@ -151,6 +151,129 @@ def read_status():
     except Exception:
         return {}
 
+# ── LaunchAgent schedule helpers ───────────────────────────────────────────────
+BACKUP_LAUNCHD = Path.home() / "Library/LaunchAgents/com.sourcestream.backup.plist"
+
+def _read_launchd_schedule():
+    """Read backup schedule from dedicated backup LaunchAgent plist.
+    Returns (hour, minute, cron_str) or (None, None, None)."""
+    try:
+        if not BACKUP_LAUNCHD.exists():
+            return None, None, None
+        import plistlib
+        with open(BACKUP_LAUNCHD, 'rb') as f:
+            pl = plistlib.load(f)
+        sci = pl.get('StartCalendarInterval', {})
+        if sci:
+            h = sci.get('Hour', 0)
+            m = sci.get('Minute', 0)
+            return h, m, f"{m} {h} * * *"
+    except Exception:
+        pass
+    return None, None, None
+
+def _write_launchd_schedule(hour, minute):
+    """Write/update com.sourcestream.backup.plist. hour=-1 removes schedule."""
+    import plistlib
+    if hour < 0:
+        try: sh(["launchctl", "unload", str(BACKUP_LAUNCHD)])
+        except Exception: pass
+        try: BACKUP_LAUNCHD.unlink(missing_ok=True)
+        except Exception: pass
+        return True
+    pl = {
+        'Label': 'com.sourcestream.backup',
+        'ProgramArguments': [str(SCRIPT)],
+        'StartCalendarInterval': {'Hour': hour, 'Minute': minute},
+        'StandardOutPath': str(LOGS_DIR / 'backup.log'),
+        'StandardErrorPath': str(LOGS_DIR / 'backup.log'),
+        'EnvironmentVariables': {'PATH': '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin'},
+    }
+    BACKUP_LAUNCHD.parent.mkdir(parents=True, exist_ok=True)
+    with open(BACKUP_LAUNCHD, 'wb') as f:
+        plistlib.dump(pl, f)
+    sh(["launchctl", "unload", str(BACKUP_LAUNCHD)])
+    sh(["launchctl", "load",   str(BACKUP_LAUNCHD)])
+    return True
+
+
+# ── Policy helpers ─────────────────────────────────────────────────────────────
+DEFAULT_POLICY = {
+    "keepLatest": "10", "keepHourly": "48", "keepDaily": "7",
+    "keepWeekly": "4", "keepMonthly": "24", "keepAnnual": "3",
+    "ignoreIdentical": "false",
+    "ignoreFiles": "", "ignoreWellKnownCaches": "true",
+    "ignoreLargerThan": "", "oneSingleFS": "false",
+    "ignoreFileErrors": "false", "ignoreDirectoryErrors": "false",
+    "ignoreUnknownTypes": "true",
+    "compressorName": "none", "minFileSize": "", "maxFileSize": "",
+    "onlyExtensions": "", "neverExtensions": "",
+    "scheduleInterval": "", "scheduleCron": "", "runMissed": "true", "manualOnly": "false",
+    "beforeScript": "", "beforeTimeout": "300", "beforeMode": "essential",
+    "afterScript": "", "afterTimeout": "300", "afterMode": "essential",
+    "noParent": "false",
+}
+
+def parse_policies():
+    """Parse [policy:PATH] sections from conf. Returns dict {path: {key: val}}."""
+    policies = {}
+    section  = None
+    cur_path = None
+    try:
+        for line in CONF.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("[policy:") and line.endswith("]"):
+                cur_path = line[8:-1]
+                policies[cur_path] = {}
+                section = "policy"
+            elif line.startswith("["):
+                section  = None
+                cur_path = None
+            elif section == "policy" and cur_path is not None and "=" in line:
+                k, v = line.split("=", 1)
+                policies[cur_path][k.strip()] = v.strip()
+    except Exception:
+        pass
+    return policies
+
+def write_policies(policies):
+    """Replace [policy:*] sections in conf without touching other sections."""
+    try:
+        text = CONF.read_text() if CONF.exists() else ""
+    except Exception:
+        text = ""
+    lines_out = []
+    skip = False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("[policy:") and s.endswith("]"):
+            skip = True
+        elif s.startswith("[") and not s.startswith("[policy:"):
+            skip = False
+        if not skip:
+            lines_out.append(line)
+    while lines_out and not lines_out[-1].strip():
+        lines_out.pop()
+    for path, fields in policies.items():
+        lines_out.append("")
+        lines_out.append(f"[policy:{path}]")
+        for k, v in fields.items():
+            lines_out.append(f"{k}={v}")
+    lines_out.append("")
+    CONF.write_text("\n".join(lines_out))
+
+def resolve_policy(path, policies):
+    """Resolve effective policy: path fields override global (*) fields."""
+    global_pol = dict(DEFAULT_POLICY)
+    global_pol.update(policies.get("*", {}))
+    path_pol   = policies.get(path, {})
+    effective  = dict(global_pol)
+    effective.update(path_pol)
+    return {"defined": path_pol, "effective": effective, "global": global_pol}
+
+
 
 # ── Common folder suggestions ──────────────────────────────────────────────────
 COMMON_FOLDERS = [
@@ -228,18 +351,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
             _, _src, _dst, _exc, _src_exc, _ = parse_conf()
             drive_path = Path(_dst[0].split("|")[0]) if _dst else GDRIVE
             c["drive"]      = drive_path.is_dir()
-            try:
-                result = subprocess.run(["crontab", "-l"], stdout=subprocess.PIPE,
-                                        stderr=subprocess.DEVNULL, text=True)
-                cl = result.stdout
-                c["cron"]       = "backup_engine" in cl or "sourcestream" in cl
-                c["cron_clean"] = ">/dev/null" not in cl
-                c["cron_entry"] = next(
-                    (l for l in cl.splitlines() if "backup_engine" in l or "sourcestream" in l),
-                    "not set"
-                )
-            except Exception:
-                c["cron"] = False; c["cron_clean"] = True; c["cron_entry"] = "not set"
+            # Check launchd plist first (more reliable from LaunchAgent sandbox)
+            _lh, _lm, _ = _read_launchd_schedule()
+            if _lh is not None:
+                c["cron"]       = True
+                c["cron_clean"] = True
+                c["cron_entry"] = f"{_lm} {_lh} * * * {SCRIPT}  [launchd]"
+            else:
+                try:
+                    result = subprocess.run(["crontab", "-l"], stdout=subprocess.PIPE,
+                                            stderr=subprocess.DEVNULL, text=True)
+                    cl = result.stdout
+                    c["cron"]       = "backup_engine" in cl or "sourcestream" in cl.lower()
+                    c["cron_clean"] = ">/dev/null" not in cl
+                    c["cron_entry"] = next(
+                        (l for l in cl.splitlines() if "backup_engine" in l or "sourcestream" in l),
+                        "not set"
+                    )
+                except Exception:
+                    c["cron"] = False; c["cron_clean"] = True; c["cron_entry"] = "not set"
             st = os.statvfs("/")
             c["ssd_free_gb"] = round(st.f_bavail * st.f_frsize / 1e9, 1)
             try:
@@ -395,7 +525,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         archs.append({
                             "name":        f.name,
                             "path":        str(f),
-                            "size_mb":     int(st.st_size / 1024 / 1024),
+                            "size_bytes":  st.st_size,
+                            "size_mb":     round(st.st_size / 1024 / 1024, 2),
                             "destination": dest_label,
                             "dest_path":   dest_path,
                             "created":     created,
@@ -615,7 +746,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
             """Return next scheduled backup time from launchd plist or cron."""
             import subprocess, re as _re
             result = {"source": None, "next": None, "schedule_str": None}
-            # 1. Try launchd StartCalendarInterval
+            # 0. Check dedicated backup launchd plist first
+            _lh, _lm, _ = _read_launchd_schedule()
+            if _lh is not None:
+                _now = datetime.datetime.now()
+                _nxt = _now.replace(hour=_lh, minute=_lm, second=0, microsecond=0)
+                if _nxt <= _now:
+                    _nxt += datetime.timedelta(days=1)
+                _diff = _nxt - _now
+                _hh, _rem = divmod(int(_diff.total_seconds()), 3600)
+                _mm = _rem // 60
+                return self.jsend({
+                    "source":       "launchd",
+                    "next":         _nxt.strftime("%Y-%m-%d %H:%M"),
+                    "schedule_str": f"Daily at {_lh:02d}:{_lm:02d}",
+                    "countdown":    f"{_hh}h {_mm}m",
+                })
+            # 1. Try server launchd StartCalendarInterval
             plist_path = Path.home() / "Library/LaunchAgents/com.sourcestream.server.plist"
             try:
                 txt = plist_path.read_text() if plist_path.exists() else ""
@@ -706,6 +853,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 key=lambda x: x["date"]
             )[-30:]
             return self.jsend({"ok": True, "trend": trend})
+
+        if p == "/api/policies":
+            pols = parse_policies()
+            return self.jsend({"ok": True, "policies": pols})
+
+        if p.startswith("/api/policies/resolve"):
+            qs   = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            path = qs.get("path", ["*"])[0]
+            pols = parse_policies()
+            resolved = resolve_policy(path, pols)
+            return self.jsend({"ok": True, "path": path, "resolved": resolved})
 
         # Static fallback
         fp = APP_RES / p.lstrip("/")
@@ -938,16 +1096,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p == "/api/schedule":
             expr = body.get("expr", "").strip()
-            script_path = str(SCRIPT)
             if not expr:
+                # Remove schedule: clear launchd plist + crontab entry
+                _write_launchd_schedule(-1, -1)
                 sh("(crontab -l 2>/dev/null | grep -v backup_engine | grep -v sourcestream) | crontab -", shell=True)
             else:
-                line = f"{expr} {script_path}"
-                sh(
-                    f"(crontab -l 2>/dev/null | grep -v backup_engine | grep -v sourcestream; "
-                    f"echo {repr(line)}) | crontab -",
-                    shell=True,
-                )
+                # Parse "M H * * *" format
+                fields_expr = expr.split()
+                if len(fields_expr) >= 2:
+                    try:
+                        minute = int(fields_expr[0])
+                        hour   = int(fields_expr[1])
+                        _write_launchd_schedule(hour, minute)
+                        # Also write crontab entry for external tools / legacy
+                        line = f"{expr} {str(SCRIPT)}"
+                        sh(
+                            f"(crontab -l 2>/dev/null | grep -v backup_engine | grep -v sourcestream; "
+                            f"echo {repr(line)}) | crontab -",
+                            shell=True,
+                        )
+                    except ValueError:
+                        return self.jsend({"ok": False, "error": "Invalid expr — expected: M H * * *"})
+                else:
+                    return self.jsend({"ok": False, "error": "Need at least minute+hour in expr"})
             return self.jsend({"ok": True})
 
         if p == "/api/notes":
@@ -1124,6 +1295,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     }.get(scheme, ""),
                 })
 
+
+        if p == "/api/archive-reveal":
+            arch_path = body.get("path", "")
+            if arch_path and Path(arch_path).exists():
+                subprocess.Popen(["open", "-R", arch_path])
+                return self.jsend({"ok": True})
+            return self.jsend({"ok": False, "error": "File not found"})
+
+        if p == "/api/policies/save":
+            pol_path = body.get("path", "").strip()
+            fields   = body.get("fields", {})
+            if not pol_path:
+                return self.jsend({"ok": False, "error": "path required"})
+            pols = parse_policies()
+            if "*" not in pols:
+                pols["*"] = {}
+            if pol_path != "*":
+                pols[pol_path] = {k: v for k, v in fields.items() if v not in ("", None)}
+            else:
+                pols["*"] = {k: v for k, v in fields.items() if v is not None}
+            write_policies(pols)
+            return self.jsend({"ok": True})
+
+        if p == "/api/policies/delete":
+            pol_path = body.get("path", "").strip()
+            if not pol_path or pol_path == "*":
+                return self.jsend({"ok": False, "error": "Cannot delete global policy"})
+            pols = parse_policies()
+            pols.pop(pol_path, None)
+            write_policies(pols)
+            return self.jsend({"ok": True})
 
         self.send_response(404); self.end_headers()
 
